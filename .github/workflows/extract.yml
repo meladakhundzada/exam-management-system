@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'exam-management-system-source.zip'
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
