@@ -1,0 +1,62 @@
+# University Examination Department Management System — local deployment.
+#
+#   docker compose up --build -d
+#   docker compose exec backend npm run migrate   # schema + seed (first time only)
+#   open http://localhost:8080
+#
+# Services: db (PostgreSQL 15), backend (Express API on :5000),
+# frontend (React build served by nginx on :8080).
+# Data survives restarts in the `pgdata` volume. Stop with
+# `docker compose down` (add -v to delete the database volume).
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: exam_management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d exam_management"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      # Compose service name `db` is the hostname inside the network.
+      DATABASE_URL: postgres://postgres:postgres@db:5432/exam_management
+      # CHANGE THIS before any shared/public use. Generate one with:
+      #   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      JWT_SECRET: change-me-to-a-long-random-secret-before-use
+      JWT_EXPIRES_IN: 8h
+      CORS_ORIGIN: http://localhost:8080
+    ports:
+      - "5000:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser calls this URL directly, so for local use it is localhost.
+        VITE_API_URL: http://localhost:5000/api
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

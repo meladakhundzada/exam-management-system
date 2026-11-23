@@ -1,0 +1,183 @@
+// Students — CRUD + profile + admit card + complaints.
+// Roles: super_admin & exam_officer manage; lecturer reads; a student may
+// only read their OWN record (enforced by studentIdMatchesSelf below).
+const express = require('express');
+const bcrypt = require('bcryptjs');
+const { body, param } = require('express-validator');
+const { query, withTransaction } = require('../config/db');
+const { authenticate, requireRole } = require('../middleware/auth');
+const { validate, pagination, paginatedResponse } = require('../middleware/validate');
+const { logAudit } = require('../utils/audit');
+const { studentGpa } = require('../utils/gpa');
+
+const router = express.Router();
+router.use(authenticate);
+
+async function studentIdMatchesSelf(req, res, next) {
+  if (req.user.role !== 'student') return next();
+  const { rows } = await query('SELECT id FROM students WHERE user_id = $1', [req.user.id]);
+  if (!rows[0] || rows[0].id !== Number(req.params.id)) {
+    return res.status(403).json({ success: false, error: 'Students can only view their own record' });
+  }
+  return next();
+}
+
+const studentValidators = [
+  body('student_id').trim().notEmpty().withMessage('student_id required'),
+  body('full_name').trim().notEmpty(),
+  body('email').isEmail(),
+  body('department_id').isInt({ min: 1 }),
+  body('admission_year').isInt({ min: 2000, max: 2100 }),
+  body('current_semester').optional().isInt({ min: 1, max: 8 }),
+  body('gender').optional().isIn(['male', 'female', 'other']),
+];
+
+// GET /api/students?page&limit&search&department_id&status
+router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (req, res, next) => {
+  try {
+    const { page, limit, offset } = pagination(req);
+    const { search = '', department_id, status } = req.query;
+    const where = []; const params = [];
+    if (search) { params.push(`%${search}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.student_id ILIKE $${params.length} OR s.email ILIKE $${params.length})`); }
+    if (department_id) { params.push(department_id); where.push(`s.department_id = $${params.length}`); }
+    if (status) { params.push(status); where.push(`s.status = $${params.length}`); }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = await query(`SELECT count(*)::int AS n FROM students s ${clause}`, params);
+    const { rows } = await query(
+      `SELECT s.*, d.name AS department_name, d.code AS department_code
+         FROM students s JOIN departments d ON d.id = s.department_id ${clause}
+        ORDER BY s.full_name LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset],
+    );
+    return res.json(paginatedResponse(rows, total.rows[0].n, { page, limit }));
+  } catch (err) { return next(err); }
+});
+
+// GET /api/students/:id — full profile + GPA/CGPA (published results only).
+router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer', 'student'),
+  param('id').isInt(), validate, studentIdMatchesSelf, async (req, res, next) => {
+    try {
+      const { rows } = await query(
+        `SELECT s.*, d.name AS department_name, f.name AS faculty_name
+           FROM students s JOIN departments d ON d.id = s.department_id
+           JOIN faculties f ON f.id = d.faculty_id WHERE s.id = $1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ success: false, error: 'Student not found' });
+      const cgpa = await studentGpa({ query: (t, p) => query(t, p) }, rows[0].id).catch(() => null);
+      return res.json({ success: true, data: { ...rows[0], cgpa } });
+    } catch (err) { return next(err); }
+  });
+
+// POST /api/students — creates BOTH the login user (role=student) and the
+// student row in one transaction. The caller supplies the student's
+// password (minimum 8 characters) in the request body — there is no
+// default password. Duplicate student_id/email → 409.
+router.post('/', requireRole('super_admin', 'exam_officer'),
+  [...studentValidators, body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')], validate,
+  async (req, res, next) => {
+    try {
+      const b = req.body;
+      const result = await withTransaction(async (client) => {
+        const hash = await bcrypt.hash(b.password, 10);
+        const user = await client.query(
+          `INSERT INTO users (role_id, full_name, email, password_hash, phone)
+           VALUES ((SELECT id FROM roles WHERE name='student'), $1, $2, $3, $4) RETURNING id`,
+          [b.full_name, b.email.toLowerCase(), hash, b.phone || null]);
+        const student = await client.query(
+          `INSERT INTO students (user_id, department_id, student_id, full_name, email, phone, gender,
+              date_of_birth, address, guardian_name, guardian_phone, admission_year, current_semester)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+          [user.rows[0].id, b.department_id, b.student_id, b.full_name, b.email.toLowerCase(),
+           b.phone || null, b.gender || null, b.date_of_birth || null, b.address || null,
+           b.guardian_name || null, b.guardian_phone || null, b.admission_year, b.current_semester || 1]);
+        return student.rows[0];
+      });
+      await logAudit({ userId: req.user.id, action: 'students.create', entityType: 'students', entityId: result.id, newValues: result, req });
+      return res.status(201).json({ success: true, data: result, message: 'Student registered.' });
+    } catch (err) { return next(err); }
+  });
+
+// PUT /api/students/:id
+router.put('/:id', requireRole('super_admin', 'exam_officer'),
+  param('id').isInt(), studentValidators, validate, async (req, res, next) => {
+    try {
+      const b = req.body;
+      const { rows } = await query(
+        `UPDATE students SET department_id=$1, full_name=$2, email=$3, phone=$4, gender=$5,
+           date_of_birth=$6, address=$7, guardian_name=$8, guardian_phone=$9,
+           admission_year=$10, current_semester=$11, status=$12
+         WHERE id=$13 RETURNING *`,
+        [b.department_id, b.full_name, b.email.toLowerCase(), b.phone || null, b.gender || null,
+         b.date_of_birth || null, b.address || null, b.guardian_name || null, b.guardian_phone || null,
+         b.admission_year, b.current_semester || 1, b.status || 'active', req.params.id]);
+      if (!rows[0]) return res.status(404).json({ success: false, error: 'Student not found' });
+      await logAudit({ userId: req.user.id, action: 'students.update', entityType: 'students', entityId: rows[0].id, newValues: rows[0], req });
+      return res.json({ success: true, data: rows[0] });
+    } catch (err) { return next(err); }
+  });
+
+// DELETE /api/students/:id — super_admin only; RESTRICTed if marks/results exist.
+router.delete('/:id', requireRole('super_admin'), param('id').isInt(), validate,
+  async (req, res, next) => {
+    try {
+      const { rows } = await query('DELETE FROM students WHERE id = $1 RETURNING id, student_id', [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ success: false, error: 'Student not found' });
+      await logAudit({ userId: req.user.id, action: 'students.delete', entityType: 'students', entityId: rows[0].id, req });
+      return res.json({ success: true, message: `Student ${rows[0].student_id} deleted` });
+    } catch (err) { return next(err); }
+  });
+
+// GET /api/students/:id/admit-card — timetable + room allocation for the
+// student's enrolled subjects in a given exam (?exam_id=). Data only;
+// the PDF itself is rendered by GET /api/reports/admit-card/:studentId.
+router.get('/:id/admit-card', requireRole('super_admin', 'exam_officer', 'student'),
+  param('id').isInt(), validate, studentIdMatchesSelf, async (req, res, next) => {
+    try {
+      const { exam_id } = req.query;
+      if (!exam_id) return res.status(400).json({ success: false, error: 'exam_id query parameter is required' });
+      const student = await query(
+        `SELECT s.*, d.name AS department_name FROM students s
+          JOIN departments d ON d.id = s.department_id WHERE s.id = $1`, [req.params.id]);
+      if (!student.rows[0]) return res.status(404).json({ success: false, error: 'Student not found' });
+      const { rows } = await query(
+        `SELECT es.exam_date, es.start_time, es.end_time, sub.code AS subject_code, sub.title AS subject_title,
+                er.name AS room_name, er.building, e.title AS exam_title
+           FROM enrollments en
+           JOIN exam_schedules es ON es.subject_id = en.subject_id AND es.exam_id = $2
+           JOIN subjects sub ON sub.id = es.subject_id
+           JOIN examinations e ON e.id = es.exam_id
+           LEFT JOIN room_allocations ra ON ra.exam_schedule_id = es.id
+           LEFT JOIN exam_rooms er ON er.id = ra.room_id
+          WHERE en.student_id = $1 ORDER BY es.exam_date, es.start_time`,
+        [req.params.id, exam_id]);
+      return res.json({ success: true, data: { student: student.rows[0], exam_id: Number(exam_id), timetable: rows } });
+    } catch (err) { return next(err); }
+  });
+
+// POST /api/students/:id/complaints — student files a rechecking complaint.
+router.post('/:id/complaints', requireRole('super_admin', 'exam_officer', 'student'),
+  [param('id').isInt(), body('type').isIn(['rechecking', 'marks_correction', 'absent_marked', 'other']),
+   body('description').trim().notEmpty()], validate, studentIdMatchesSelf, async (req, res, next) => {
+    try {
+      const { rows } = await query(
+        `INSERT INTO complaints (student_id, exam_id, subject_id, result_id, type, description)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [req.params.id, req.body.exam_id || null, req.body.subject_id || null,
+         req.body.result_id || null, req.body.type, req.body.description]);
+      await logAudit({ userId: req.user.id, action: 'complaints.create', entityType: 'complaints', entityId: rows[0].id, req });
+      return res.status(201).json({ success: true, data: rows[0] });
+    } catch (err) { return next(err); }
+  });
+
+// GET /api/students/:id/complaints
+router.get('/:id/complaints', requireRole('super_admin', 'exam_officer', 'student'),
+  param('id').isInt(), validate, studentIdMatchesSelf, async (req, res, next) => {
+    try {
+      const { rows } = await query(
+        `SELECT c.*, sub.code AS subject_code, e.title AS exam_title FROM complaints c
+          LEFT JOIN subjects sub ON sub.id = c.subject_id LEFT JOIN examinations e ON e.id = c.exam_id
+         WHERE c.student_id = $1 ORDER BY c.created_at DESC`, [req.params.id]);
+      return res.json({ success: true, data: rows });
+    } catch (err) { return next(err); }
+  });
+
+module.exports = router;
