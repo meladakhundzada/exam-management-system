@@ -322,6 +322,17 @@ there is no default password.
 // 201 — { "success": true, "data": { "id": 3, "role": "lecturer", "lecturer_id": 7, … } }
 ```
 
+## 11. Dashboard — `/api/dashboard`
+
+What the frontend Dashboard page calls. Any authenticated role; numbers
+are role-scoped — staff see the whole system, lecturers see only their
+own subjects, students see only their own enrolments/results.
+
+| Method & path | Roles | Description |
+|---|---|---|
+| `GET /api/dashboard/stats` | any | Counts + chart data in camelCase: `{ totalStudents, totalLecturers, totalDepartments, totalSubjects, upcomingExams, completedExams, publishedResults, pendingMarks, examsByStatus: [{ status, count }], resultsByDepartment: [{ department, averageGpa, passRate }], monthlyExams: [{ month, scheduled, completed }] }`. `examsByStatus` uses uppercase statuses (`DRAFT`, `SCHEDULED`, …); `monthlyExams` covers the last 6 months by exam `start_date`; `passRate` = % of published results with `grade_point >= 1` (grade D or better) |
+| `GET /api/dashboard/activity?limit=10` | any | Recent audit-log entries `[{ id, actorName, action, entity, createdAt }]`; staff see all, lecturers/students see only their own actions. `limit` is capped at 50 |
+
 ## Audit logging
 
 Every mutation (login, create/update/delete, marks submit/approve/reject,
