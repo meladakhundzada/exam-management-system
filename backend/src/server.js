@@ -32,6 +32,7 @@ app.use('/api/lecturers', require('./routes/lecturers'));
 app.use('/api/exams', require('./routes/exams'));
 app.use('/api/marks', require('./routes/marks'));
 app.use('/api/results', require('./routes/results'));
+app.use('/api/fees', require('./routes/fees'));
 app.use('/api/reports', require('./routes/reports'));
 
 // Reference data used by the frontend forms (faculties, departments,

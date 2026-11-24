@@ -3,8 +3,10 @@
 A centralized digital system for a university Examination Department:
 student and lecturer management, subjects, exam timetables and room
 allocation, attendance, marks entry and approval, GPA/CGPA results,
-admit cards, rechecking complaints, reports and audit logs — with
-role-based access for Super Admin, Examination Officer, Lecturer and Student.
+admit cards, rechecking complaints, fees (Tuition, Exam Fee, Admission,
+Library, Other — with payments, receipts and due reports, all in AFN),
+reports and audit logs — with role-based access for Super Admin,
+Examination Officer, Lecturer and Student.
 
 ## Architecture
 
@@ -30,6 +32,7 @@ role-based access for Super Admin, Examination Officer, Lecturer and Student.
 │  users · roles · students · lecturers · faculties · departments  │
 │  subjects · examinations · rooms · attendance · marks · results │
 │  grade_scales · complaints · notifications · audit_logs         │
+│  fee_types · student_fees · fee_payments (migration 003)        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -104,6 +107,26 @@ npm run dev                                      # http://localhost:5173
 Full instructions: [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).
 Demo logins and the 12-step exam workflow: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 Release gate: [docs/TESTING_CHECKLIST.md](docs/TESTING_CHECKLIST.md).
+
+## Open in Visual Studio Code
+
+The simplest way to open and run this project — **no Docker needed**:
+
+1. Extract the ZIP and double-click `exam-management-system.code-workspace`
+   (or open the folder in VS Code).
+2. Double-click `run.bat` (Windows). It asks once for your PostgreSQL
+   password, creates `backend/.env`, creates the database, runs the
+   schema migration, and starts backend + frontend.
+   Or press `Ctrl+Shift+B` in VS Code and pick
+   **Run Everything (VS Code, no Docker)** (after the first `run.bat`).
+3. Open http://localhost:5173 in Chrome.
+4. Create the first Super Admin (see `SIMPLE_START.md`).
+
+Full simple guide (Pashto): [SIMPLE_START.md](SIMPLE_START.md).
+Offline install: [docs/OFFLINE_GUIDE.md](docs/OFFLINE_GUIDE.md).
+VS Code tasks are in `.vscode/tasks.json`, debug configs in
+`.vscode/launch.json`, recommended extensions in `.vscode/extensions.json`.
+Docker is still available as an alternative (`start.bat`, port 8080).
 
 ## Deployment (put it on the internet)
 

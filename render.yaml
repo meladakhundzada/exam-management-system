@@ -33,10 +33,19 @@ services:
         value: https://exam-frontend.onrender.com
 
   # ---- Frontend (React + Vite static site) -----------------------------
+  # NOTE: static sites have no `plan` field — adding `plan: free` here
+  # broke the Blueprint ("no such plan free for service type web") and
+  # the services were created manually instead. The live static site
+  # was created WITHOUT the rewrite rule below, which is why direct
+  # loads of /login, /dashboard, /setup, etc. return plain "Not Found"
+  # (only / serves the app). Until the live site is redeployed from
+  # this Blueprint, add the same rewrite in the Render dashboard:
+  # exam-frontend → Redirects/Rewrites → Rewrite /* to /index.html.
+  # frontend/public/_redirects ships the same rule in the build output
+  # as a second mechanism.
   - type: web
     name: exam-frontend
     env: static
-    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist

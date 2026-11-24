@@ -257,6 +257,40 @@ E 50–59.99 → 0.50, F 0–49.99 → 0.00). GPA = Σ(grade_point × credit_hou
 Export endpoints return a file download (`Content-Disposition: attachment`),
 not JSON — e.g. `curl -H "Authorization: Bearer $TOKEN" "localhost:5000/api/reports/students/export?format=xlsx" -o students.xlsx`.
 
+## 9. Fees — `/api/fees`
+
+Amounts are in AFN (display convention; the database stores plain NUMERIC).
+Status flow: `unpaid → partial → paid`; `overdue` is computed from
+`due_date` on read (no background job). A payment can never exceed the
+remaining balance. Receipt numbers are `REC-YYYY-NNNN`
+(e.g. `REC-2026-0001`).
+
+| Method & path | Roles | Description |
+|---|---|---|
+| `GET /api/fees/types` | any | List fee types (Tuition, Exam Fee, Admission, Library, Other) |
+| `POST /api/fees/types` | super_admin, exam_officer | Create a fee type (`{ name, amount, description?, department_id?, semester_id?, academic_year_id? }`; amount > 0) |
+| `GET /api/fees/student/:studentId` | super_admin, exam_officer, student (own only) | One student's fees with payments + totals `{ fees, totals: { total_due, total_paid, outstanding } }` |
+| `GET /api/fees/due?status&search&department_id&semester_id` | super_admin, exam_officer | Unpaid/partial list (default); `status=overdue` = past due date, still unpaid/partial; `status=paid` lists paid fees |
+| `POST /api/fees/assign` | super_admin, exam_officer | Charge a fee type to one student (`student_id`) or a whole department cohort (`department_id`, optional `semester_id`); optional `amount` (defaults to the fee type's amount), `due_date`, `academic_year_id` |
+| `GET /api/fees/:id` | super_admin, exam_officer, student (own only) | One fee with its payments (receipt view) |
+| `POST /api/fees/:id/pay` | super_admin, exam_officer | Record a payment (`{ amount, payment_method: cash\|bank\|mobile_money\|other, payment_date?, note? }`); returns `{ payment, fee }` with the generated `receipt_no` |
+| `GET /api/fees/report?department_id&semester_id&academic_year_id` | super_admin, exam_officer | Totals `{ total_due, total_collected, outstanding, fee_count, paid_count, unpaid_count }` + breakdown `by_fee_type` |
+
+```json
+// POST /api/fees/assign — charge the Exam Fee to one student
+{ "fee_type_id": 2, "student_id": 13, "due_date": "2026-12-01" }
+// 201 — { "success": true, "data": [ { "id": 5, "student_id": 13, "fee_type_id": 2,
+//         "amount_due": 2500, "amount_paid": 0, "status": "unpaid", … } ], "count": 1 }
+// 409 if the fee is already assigned to that student for that year/semester.
+
+// POST /api/fees/5/pay — record a part payment
+{ "amount": 1000, "payment_method": "cash", "note": "first instalment" }
+// 201 — { "success": true, "data": { "payment": { "id": 1, "receipt_no": "REC-2026-0001",
+//         "amount": 1000, "payment_method": "cash", … },
+//         "fee": { "id": 5, "amount_paid": 1000, "status": "partial", … } } }
+// 400 if the payment exceeds the remaining balance.
+```
+
 ## Audit logging
 
 Every mutation (login, create/update/delete, marks submit/approve/reject,

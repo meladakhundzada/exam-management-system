@@ -23,11 +23,11 @@ export const ROLE_ROUTES: Record<Role, string[]> = {
   SUPER_ADMIN: ['*'],
   EXAM_OFFICER: [
     '/dashboard', '/students', '/lecturers', '/departments', '/subjects',
-    '/exams', '/timetable', '/attendance', '/marks', '/results',
+    '/exams', '/timetable', '/attendance', '/marks', '/results', '/fees',
     '/complaints', '/reports', '/notifications', '/audit-logs',
   ],
   LECTURER: ['/dashboard', '/subjects', '/exams', '/timetable', '/marks', '/results'],
-  STUDENT: ['/dashboard', '/timetable', '/results', '/admit-card', '/complaints'],
+  STUDENT: ['/dashboard', '/timetable', '/results', '/fees', '/admit-card', '/complaints'],
 };
 
 interface AuthContextValue {
@@ -40,6 +40,33 @@ interface AuthContextValue {
   hasRole: (...roles: Role[]) => boolean;
   canAccess: (path: string) => boolean;
   clearError: () => void;
+}
+
+// The backend returns snake_case users with lowercase roles
+// ({ id, full_name, email, role: 'super_admin' }) and login returns a
+// flat { token, user } body — not the { data: { accessToken, user } }
+// shape the frontend types describe. Normalize both here so login and
+// session restore actually work (without this, login throws reading
+// data.accessToken and the sidebar crashes on the unknown role).
+const ROLE_MAP: Record<string, Role> = {
+  super_admin: 'SUPER_ADMIN',
+  exam_officer: 'EXAM_OFFICER',
+  lecturer: 'LECTURER',
+  student: 'STUDENT',
+};
+
+function normalizeAuthUser(raw: unknown): AuthUser {
+  const u = raw as Record<string, unknown>;
+  const role = String(u.role ?? '');
+  return {
+    id: String(u.id ?? ''),
+    email: String(u.email ?? ''),
+    fullName: String(u.fullName ?? u.full_name ?? ''),
+    role: (ROLE_MAP[role] ?? role) as Role,
+    departmentId: (u.departmentId ?? u.department_id ?? null) as string | null,
+    studentId: (u.studentId ?? u.student_id ?? null) as string | null,
+    lecturerId: (u.lecturerId ?? u.lecturer_id ?? null) as string | null,
+  };
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -56,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!tokenStore.get()) { setLoading(false); return; }
       try {
         const { data } = await authApi.me();
-        if (!cancelled) setUser(data.data);
+        if (!cancelled) setUser(normalizeAuthUser(data.data));
       } catch {
         tokenStore.clear();
         if (!cancelled) setUser(null);
@@ -72,8 +99,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       const { data } = await authApi.login(email.trim().toLowerCase(), password);
-      tokenStore.set(data.data.accessToken, data.data.refreshToken);
-      setUser(data.data.user);
+      // Backend login body is { success, token, user } (flat); tolerate
+      // the { data: { accessToken, user } } shape too.
+      const body = data as unknown as {
+        token?: string;
+        user?: unknown;
+        data?: { accessToken?: string; refreshToken?: string; user?: unknown };
+      };
+      const token = body.token ?? body.data?.accessToken;
+      const rawUser = body.user ?? body.data?.user;
+      if (!token || !rawUser) throw new Error('Unexpected login response from the server.');
+      tokenStore.set(token, body.data?.refreshToken);
+      setUser(normalizeAuthUser(rawUser));
     } catch (err) {
       setError(apiErrorMessage(err));
       throw err;

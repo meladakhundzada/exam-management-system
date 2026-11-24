@@ -59,7 +59,12 @@ api.interceptors.response.use(
           refreshQueue = [];
           refreshing = false;
           tokenStore.clear();
-          window.location.href = '/login';
+          // Full-page navigation (not client-side routing): on a static
+          // host without an SPA rewrite this used to land on a plain
+          // "Not Found" document. Only navigate when not already there;
+          // the rewrite in render.yaml / public/_redirects makes /login
+          // serve index.html.
+          if (window.location.pathname !== '/login') window.location.href = '/login';
           return Promise.reject(error);
         }
       }
@@ -104,6 +109,13 @@ export const authApi = {
   me: () => api.get<ApiResponse<AuthUser>>('/auth/me'),
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post('/auth/change-password', { currentPassword, newPassword }),
+  // One-time first Super Admin setup. Works only while no users exist;
+  // afterwards the backend returns 403 "Setup already completed: users exist".
+  setupFirstAdmin: (fullName: string, email: string, password: string) =>
+    api.post<ApiResponse<{ id: number; full_name: string; email: string }>>(
+      '/auth/setup-first-admin',
+      { full_name: fullName, email, password },
+    ),
 };
 
 export interface AuthUser {
@@ -217,6 +229,77 @@ export const resultsApi = {
     api.get(`/results/transcript/${studentId}`, { responseType: 'blob' }),
 };
 
+// --- Fees (amounts in AFN; backend returns snake_case rows, as sent by pg) ---
+export function formatAfn(amount: number | string): string {
+  const n = typeof amount === 'string' ? Number(amount) : amount;
+  return `${Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 2 }) : amount} AFN`;
+}
+
+export interface FeeType {
+  id: number;
+  name: string;
+  description?: string | null;
+  amount: number;
+  department_id?: number | null;
+  semester_id?: number | null;
+  academic_year_id?: number | null;
+  is_active: boolean;
+}
+
+export interface FeePayment {
+  id: number;
+  student_fee_id: number;
+  amount: number;
+  payment_method: 'cash' | 'bank' | 'mobile_money' | 'other';
+  receipt_no: string;
+  received_by?: number | null;
+  received_by_name?: string | null;
+  payment_date: string;
+  note?: string | null;
+}
+
+export interface StudentFee {
+  id: number;
+  student_id: number;
+  student_name: string;
+  email?: string;
+  student_email?: string;
+  department_name?: string | null;
+  fee_type_id: number;
+  fee_type_name: string;
+  amount_due: number;
+  amount_paid: number;
+  balance: number;
+  due_date?: string | null;
+  status: 'unpaid' | 'partial' | 'paid' | 'overdue';
+  display_status: 'unpaid' | 'partial' | 'paid' | 'overdue';
+  academic_year_id?: number | null;
+  semester_id?: number | null;
+  payments?: FeePayment[];
+}
+
+export interface FeeReport {
+  totals: { total_due: number; total_collected: number; outstanding: number; fee_count: number; paid_count: number; unpaid_count: number };
+  by_fee_type: Array<{ fee_type: string; total_due: number; total_collected: number; outstanding: number; fee_count: number }>;
+}
+
+export const feesApi = {
+  types: () => api.get<ApiResponse<FeeType[]>>('/fees/types'),
+  createType: (payload: { name: string; amount: number; description?: string; department_id?: number; semester_id?: number; academic_year_id?: number }) =>
+    api.post<ApiResponse<FeeType>>('/fees/types', payload),
+  byStudent: (studentId: string | number) =>
+    api.get<ApiResponse<{ fees: StudentFee[]; totals: { total_due: number; total_paid: number; outstanding: number } }>>(`/fees/student/${studentId}`),
+  due: (params: PaginatedParams = {}) =>
+    api.get<ApiResponse<StudentFee[]>>(`/fees/due?${buildQuery(params)}`),
+  report: (params: PaginatedParams = {}) =>
+    api.get<ApiResponse<FeeReport>>(`/fees/report?${buildQuery(params)}`),
+  assign: (payload: { fee_type_id: number; amount?: number; student_id?: number; department_id?: number; semester_id?: number; academic_year_id?: number; due_date?: string }) =>
+    api.post<ApiResponse<StudentFee[]> & { count: number }>('/fees/assign', payload),
+  get: (id: number) => api.get<ApiResponse<StudentFee>>(`/fees/${id}`),
+  pay: (id: number, payload: { amount: number; payment_method?: string; payment_date?: string; note?: string }) =>
+    api.post<ApiResponse<{ payment: FeePayment; fee: StudentFee }>>(`/fees/${id}/pay`, payload),
+};
+
 export const dashboardApi = {
   stats: () => api.get<ApiResponse<DashboardStats>>('/dashboard/stats'),
   recentActivity: () => api.get<ApiResponse<ActivityItem[]>>('/dashboard/activity?limit=10'),
@@ -255,7 +338,10 @@ export function downloadBlob(blob: Blob, filename: string) {
 
 export function apiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as { message?: string } | undefined;
+    // The backend returns errors as { success: false, error: "..." },
+    // not { message: ... } — read both.
+    const data = error.response?.data as { message?: string; error?: string } | undefined;
+    if (data?.error) return data.error;
     if (data?.message) return data.message;
     if (error.response?.status === 403) return 'You do not have permission to perform this action.';
     if (error.response?.status === 404) return 'The requested record was not found.';

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -7,9 +7,11 @@ import Students from './pages/Students';
 import Exams from './pages/Exams';
 import Marks from './pages/Marks';
 import Results from './pages/Results';
+import Fees from './pages/Fees';
+import Setup from './pages/Setup';
 
 function LoginPage() {
-  const { login, error, loading, clearError } = useAuth();
+  const { login, error, loading, clearError, isAuthenticated } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -19,6 +21,9 @@ function LoginPage() {
     clearError();
     try { await login(email, password); } catch { /* error shown from context */ }
   };
+
+  // After a successful sign-in, leave the login page.
+  if (isAuthenticated) return <Navigate to="/dashboard" replace />;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-navy-900 px-4">
@@ -46,6 +51,9 @@ function LoginPage() {
         <button type="submit" disabled={loading} className="mt-6 w-full rounded-lg bg-navy-600 py-2.5 font-semibold text-white hover:bg-navy-700 disabled:opacity-50">
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
+        <p className="mt-4 text-center text-sm">
+          <Link to="/setup" className="text-navy-600 hover:underline">Create the first Super Admin</Link>
+        </p>
         <p className="mt-4 text-xs leading-relaxed text-slate-500">
           Demo accounts are listed in docs/USER_GUIDE.md. Change the default Super Admin
           password on first login (Settings → Change password).
@@ -115,6 +123,7 @@ function Layout() {
             <Route path="/marks" element={<Marks />} />
             <Route path="/marks/:examId" element={<Marks />} />
             <Route path="/results" element={<Results />} />
+            <Route path="/fees" element={<Fees />} />
             <Route path="/lecturers" element={<Placeholder title="Lecturers" />} />
             <Route path="/departments" element={<Placeholder title="Departments & Faculties" />} />
             <Route path="/subjects" element={<Placeholder title="Subjects & Courses" />} />
@@ -141,6 +150,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/setup" element={<Setup />} />
           <Route path="/*" element={<RequireAuth><Layout /></RequireAuth>} />
         </Routes>
       </BrowserRouter>

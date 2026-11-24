@@ -110,6 +110,11 @@ that does it and where to click.
   (see `SETUP_GUIDE.md` §9 for the `pg_dump` / `pg_restore` commands).
 - **Audit Logs** — every login, create, update, delete, approval and
   publication, with who did it and when. Filter by user, action or date.
+- **Fees** — create fee types (Tuition, Exam Fee, Admission, Library,
+  Other), assign a fee to one student or a whole department, record
+  payments (cash / bank / mobile money), print receipts
+  (`REC-2026-0001` …), and see the fee report: total due, collected
+  and outstanding, broken down by fee type.
 
 ## 5. Examination Officer
 
@@ -124,6 +129,10 @@ that does it and where to click.
   again), view department-wise and semester performance reports.
 - **Complaints** — see student rechecking requests, change status
   (Received → Under review → Resolved / Rejected), record the outcome.
+- **Fees** — assign fee types to students or departments, record
+  payments and print receipts, and follow up the Due list
+  (unpaid / partial / overdue). A payment can never exceed the
+  remaining balance; a fee may be paid in instalments.
 - **Reports** — student lists, exam schedules, attendance, marks sheets,
   department-wise results, semester performance, exam statistics — PDF and
   Excel export.
@@ -155,6 +164,10 @@ that does it and where to click.
 5. **Complaints / Rechecking** — *New complaint*: choose the subject/exam,
    explain the issue (e.g. "request rechecking"), submit. Track its status;
    the officer's decision and any corrected mark appear there.
+6. **Fees** — see your own fee charges (Tuition, Exam Fee, …) with due
+   dates, what you have paid and what is still outstanding — all in AFN.
+   Pay at the Examination Office and keep the receipt number
+   (`REC-2026-0001` …). You cannot see any other student's fees.
 
 ## 8. Common tasks
 

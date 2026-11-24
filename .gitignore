@@ -1,0 +1,16 @@
+# Dependencies and build output — never commit these.
+node_modules/
+frontend/node_modules/
+backend/node_modules/
+frontend/dist/
+backend/dist/
+
+# Local environment files (contain real passwords/secrets).
+.env
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# OS / editor files.
+.DS_Store
+Thumbs.db
