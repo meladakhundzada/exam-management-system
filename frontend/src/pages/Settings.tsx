@@ -3,12 +3,17 @@ import DataTable, { Column } from '../components/DataTable';
 import {
   authApi, gradeScalesApi, GradeScale, apiErrorMessage,
 } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const inputCls = 'mt-1 w-full rounded-lg border px-3 py-2 dark:border-slate-600 dark:bg-slate-900';
 
 type GradeRow = Omit<GradeScale, 'id'> & { id: string };
 
 export default function Settings() {
+  // Grade scale and backup are Super Admin only; every other role that
+  // can open this page (students) sees only the Change password section.
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole('SUPER_ADMIN');
   // Change password.
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
   const [pwError, setPwError] = useState<string | null>(null);
@@ -38,7 +43,7 @@ export default function Settings() {
     }
   };
 
-  useEffect(() => { loadScales(); }, []);
+  useEffect(() => { if (isAdmin) loadScales(); }, [isAdmin]);
 
   const changePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,8 +113,10 @@ export default function Settings() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Settings, Grade Scale &amp; Backup</h1>
-        <p className="text-sm text-slate-500">Super Admin only.</p>
+        <h1 className="text-2xl font-bold">Settings{isAdmin ? ', Grade Scale & Backup' : ''}</h1>
+        <p className="text-sm text-slate-500">
+          {isAdmin ? 'Super Admin only.' : 'Change the password of the account you are signed in with.'}
+        </p>
       </div>
 
       <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
@@ -135,6 +142,8 @@ export default function Settings() {
         </form>
       </section>
 
+      {isAdmin && (
+      <>
       <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
         <h2 className="text-lg font-bold">Grade scale</h2>
         <p className="text-sm text-slate-500">The bands used to convert marks into grades and grade points. Editing a band affects future result calculations.</p>
@@ -164,6 +173,8 @@ export default function Settings() {
           database credentials into this app.
         </p>
       </section>
+      </>
+      )}
 
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Edit grade band">

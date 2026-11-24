@@ -208,7 +208,56 @@ export const studentsApi = {
   // GET /api/reports/students/export — the backend has no /students/export
   // route (and no CSV format); the real export is xlsx (default) or pdf.
   exportCsv: () => api.get('/reports/students/export', { responseType: 'blob' }),
+  // Student's own enrolled courses (GET /api/students/:id/enrollments).
+  enrollments: (id: string) =>
+    api.get<ApiResponse<EnrollmentRow[]>>(`/students/${encodeURIComponent(id)}/enrollments`),
+  // Student's own examination attendance (GET /api/students/:id/attendance).
+  attendance: (id: string) =>
+    api.get<ApiResponse<StudentAttendanceRow[]>>(`/students/${encodeURIComponent(id)}/attendance`),
+  // Admit-card timetable data (GET /api/students/:id/admit-card?exam_id=).
+  admitCardData: (id: string, examId: string) =>
+    api.get<ApiResponse<{ student: Record<string, unknown>; exam_id: number; timetable: AdmitCardRow[] }>>(
+      `/students/${encodeURIComponent(id)}/admit-card?exam_id=${encodeURIComponent(examId)}`,
+    ),
 };
+
+export interface EnrollmentRow {
+  id: number;
+  status: string;
+  enrolled_at: string;
+  subject_id: number;
+  subject_code: string;
+  subject_title: string;
+  credit_hours: number;
+  semester_name: string;
+  academic_year: string;
+  lecturer_name?: string | null;
+}
+
+export interface StudentAttendanceRow {
+  id: number;
+  status: 'present' | 'absent' | 'late';
+  marked_at: string;
+  exam_date: string;
+  start_time: string;
+  end_time: string;
+  subject_code: string;
+  subject_title: string;
+  exam_title: string;
+  exam_type: string;
+  room_name?: string | null;
+}
+
+export interface AdmitCardRow {
+  exam_date: string;
+  start_time: string;
+  end_time: string;
+  subject_code: string;
+  subject_title: string;
+  room_name?: string | null;
+  building?: string | null;
+  exam_title: string;
+}
 
 export const examsApi = {
   list: (params: PaginatedParams = {}) =>

@@ -189,7 +189,7 @@ export default function Results() {
           <button onClick={downloadTranscript} disabled={!studentId || results.length === 0} className="rounded-lg border bg-white px-4 py-2 text-sm dark:bg-slate-800 disabled:opacity-50">
             Download transcript (PDF)
           </button>
-          <span className="text-sm text-slate-500">Admit cards are available from the Timetable page.</span>
+          <span className="text-sm text-slate-500">Admit cards are available from the Admit Card page.</span>
         </div>
       )}
 

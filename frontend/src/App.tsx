@@ -20,6 +20,10 @@ import Notifications from './pages/Notifications';
 import AuditLogs from './pages/AuditLogs';
 import Settings from './pages/Settings';
 import Setup from './pages/Setup';
+import MyProfile from './pages/MyProfile';
+import MyCourses from './pages/MyCourses';
+import MyAttendance from './pages/MyAttendance';
+import AdmitCard from './pages/AdmitCard';
 
 function LoginPage() {
   const { login, error, loading, clearError, isAuthenticated } = useAuth();
@@ -67,18 +71,6 @@ function LoginPage() {
   );
 }
 
-function Placeholder({ title }: { title: string }) {
-  return (
-    <div className="rounded-xl bg-white p-8 shadow-card dark:bg-slate-800">
-      <h1 className="text-xl font-bold">{title}</h1>
-      <p className="mt-2 text-sm text-slate-500">
-        This module is wired to the matching backend API (see docs/USER_GUIDE.md for the workflow).
-        It follows the same DataTable + form pattern as Students and Exams.
-      </p>
-    </div>
-  );
-}
-
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { isAuthenticated, loading, canAccess } = useAuth();
   const location = useLocation();
@@ -122,6 +114,9 @@ function Layout() {
         <main className="flex-1 p-4 sm:p-6">
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/profile" element={<MyProfile />} />
+            <Route path="/my-courses" element={<MyCourses />} />
+            <Route path="/my-attendance" element={<MyAttendance />} />
             <Route path="/students" element={<Students />} />
             <Route path="/exams" element={<Exams />} />
             <Route path="/marks" element={<Marks />} />
@@ -133,7 +128,7 @@ function Layout() {
             <Route path="/subjects" element={<Subjects />} />
             <Route path="/timetable" element={<Timetable />} />
             <Route path="/attendance" element={<Attendance />} />
-            <Route path="/admit-card" element={<Placeholder title="Admit Card" />} />
+            <Route path="/admit-card" element={<AdmitCard />} />
             <Route path="/complaints" element={<Complaints />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/notifications" element={<Notifications />} />

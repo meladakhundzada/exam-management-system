@@ -159,6 +159,46 @@ router.get('/:id/admit-card', requireRole('super_admin', 'exam_officer', 'studen
     } catch (err) { return next(err); }
   });
 
+// GET /api/students/:id/enrollments — the student's enrolled courses
+// (subjects with lecturer, semester and academic year). A student sees
+// only their own enrolments.
+router.get('/:id/enrollments', requireRole('super_admin', 'exam_officer', 'student'),
+  param('id').isInt(), validate, studentIdMatchesSelf, async (req, res, next) => {
+    try {
+      const { rows } = await query(
+        `SELECT en.id, en.status, en.enrolled_at, sub.id AS subject_id, sub.code AS subject_code,
+                sub.title AS subject_title, sub.credit_hours, sem.name AS semester_name,
+                ay.name AS academic_year, t.full_name AS lecturer_name
+           FROM enrollments en
+           JOIN subjects sub ON sub.id = en.subject_id
+           JOIN semesters sem ON sem.id = en.semester_id
+           JOIN academic_years ay ON ay.id = en.academic_year_id
+           LEFT JOIN lecturers t ON t.id = sub.lecturer_id
+          WHERE en.student_id = $1 ORDER BY sub.code`, [req.params.id]);
+      return res.json({ success: true, data: rows });
+    } catch (err) { return next(err); }
+  });
+
+// GET /api/students/:id/attendance — the student's own examination
+// attendance records (exam, subject, date/time, room, status).
+// A student sees only their own records.
+router.get('/:id/attendance', requireRole('super_admin', 'exam_officer', 'student'),
+  param('id').isInt(), validate, studentIdMatchesSelf, async (req, res, next) => {
+    try {
+      const { rows } = await query(
+        `SELECT a.id, a.status, a.marked_at, es.exam_date, es.start_time, es.end_time,
+                sub.code AS subject_code, sub.title AS subject_title, e.title AS exam_title,
+                e.exam_type, er.name AS room_name
+           FROM attendance a
+           JOIN exam_schedules es ON es.id = a.exam_schedule_id
+           JOIN examinations e ON e.id = es.exam_id
+           JOIN subjects sub ON sub.id = es.subject_id
+           LEFT JOIN exam_rooms er ON er.id = a.room_id
+          WHERE a.student_id = $1 ORDER BY es.exam_date DESC, es.start_time`, [req.params.id]);
+      return res.json({ success: true, data: rows });
+    } catch (err) { return next(err); }
+  });
+
 // POST /api/students/:id/complaints — student files a rechecking complaint.
 router.post('/:id/complaints', requireRole('super_admin', 'exam_officer', 'student'),
   [param('id').isInt(), body('type').isIn(['rechecking', 'marks_correction', 'absent_marked', 'other']),

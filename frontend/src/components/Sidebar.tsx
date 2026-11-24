@@ -10,12 +10,15 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT'] },
+  { to: '/profile', label: 'My Profile', icon: '👤', roles: ['STUDENT'] },
   { to: '/students', label: 'Students', icon: '🎓', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/lecturers', label: 'Lecturers', icon: '👩‍🏫', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/departments', label: 'Departments', icon: '🏛️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/subjects', label: 'Subjects', icon: '📚', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/exams', label: 'Examinations', icon: '📝', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/timetable', label: 'Timetable', icon: '🗓️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
+  { to: '/my-courses', label: 'My Courses', icon: '📚', roles: ['STUDENT'] },
+  { to: '/my-attendance', label: 'My Attendance', icon: '✅', roles: ['STUDENT'] },
   { to: '/attendance', label: 'Attendance', icon: '✅', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/marks', label: 'Marks Entry', icon: '✏️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/results', label: 'Results', icon: '📊', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
@@ -26,7 +29,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/notifications', label: 'Notifications', icon: '🔔', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/users', label: 'User Management', icon: '👥', roles: ['SUPER_ADMIN'] },
   { to: '/audit-logs', label: 'Audit Logs', icon: '🧾', roles: ['SUPER_ADMIN'] },
-  { to: '/settings', label: 'Settings & Backup', icon: '⚙️', roles: ['SUPER_ADMIN'] },
+  { to: '/settings', label: 'Settings & Backup', icon: '⚙️', roles: ['SUPER_ADMIN', 'STUDENT'] },
 ];
 
 export default function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {

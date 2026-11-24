@@ -29,7 +29,7 @@ export const ROLE_ROUTES: Record<Role, string[]> = {
   ],
   FINANCE: ['/dashboard', '/fees', '/reports'],
   LECTURER: ['/dashboard', '/subjects', '/exams', '/timetable', '/marks', '/results'],
-  STUDENT: ['/dashboard', '/timetable', '/results', '/fees', '/admit-card', '/complaints'],
+  STUDENT: ['/dashboard', '/profile', '/my-courses', '/my-attendance', '/timetable', '/results', '/fees', '/admit-card', '/complaints', '/settings'],
 };
 
 interface AuthContextValue {

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { examsApi, reportsApi, apiErrorMessage, downloadBlob } from '../services/api';
+import { examsApi, reportsApi, studentsApi, apiErrorMessage, downloadBlob } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 // The backend returns snake_case examination rows (title, exam_type,
 // start_date, end_date, status in lowercase). GET /api/exams/:id adds a
 // nested `schedules` array with subject code/title, room and invigilator.
 interface ScheduleRow {
   id: number;
+  subject_id?: number;
   exam_date: string;
   start_time: string;
   end_time: string;
@@ -30,6 +32,9 @@ interface ExamRow {
 const fmtDate = (d: string) => String(d).slice(0, 10);
 
 export default function Timetable() {
+  const { user, hasRole } = useAuth();
+  const isStudent = hasRole('STUDENT');
+  const canExport = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
   const [exams, setExams] = useState<ExamRow[]>([]);
   const [examId, setExamId] = useState('');
   const [exam, setExam] = useState<ExamRow | null>(null);
@@ -37,6 +42,9 @@ export default function Timetable() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Students see only their own class timetable: schedules are filtered
+  // to their enrolled subjects (loaded once from their enrolments).
+  const [enrolledSubjectIds, setEnrolledSubjectIds] = useState<Set<number> | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -51,6 +59,14 @@ export default function Timetable() {
         setLoading(false);
       }
     })();
+    if (isStudent && user?.studentId) {
+      studentsApi.enrollments(user.studentId)
+        .then(({ data }) => setEnrolledSubjectIds(
+          new Set((data.data as unknown as Array<{ subject_id: number }>).map((e) => Number(e.subject_id))),
+        ))
+        .catch(() => setEnrolledSubjectIds(new Set()));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadExam = async (id: string) => {
@@ -80,7 +96,9 @@ export default function Timetable() {
     }
   };
 
-  const schedules = exam?.schedules ?? [];
+  const schedules = (exam?.schedules ?? []).filter(
+    (s) => !isStudent || !enrolledSubjectIds || enrolledSubjectIds.has(Number(s.subject_id)),
+  );
 
   return (
     <div className="space-y-4">
@@ -109,7 +127,7 @@ export default function Timetable() {
             ))}
           </select>
         </label>
-        {examId && (
+        {examId && canExport && (
           <span className="flex gap-2">
             <button onClick={() => exportSchedule('xlsx')} className="rounded-lg border bg-white px-3 py-2 text-sm dark:bg-slate-800">Export Excel</button>
             <button onClick={() => exportSchedule('pdf')} className="rounded-lg border bg-white px-3 py-2 text-sm dark:bg-slate-800">Export PDF</button>
@@ -134,7 +152,9 @@ export default function Timetable() {
           </div>
           {schedules.length === 0 ? (
             <p className="px-4 py-10 text-center text-sm text-slate-500">
-              No subjects scheduled for this examination yet — add schedules on the Examinations page.
+              {isStudent
+                ? 'None of your enrolled subjects are scheduled in this examination yet.'
+                : 'No subjects scheduled for this examination yet — add schedules on the Examinations page.'}
             </p>
           ) : (
             <table className="w-full min-w-[640px] text-left text-sm">
