@@ -9,6 +9,7 @@ const { query, withTransaction } = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, pagination, paginatedResponse } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
+const { ensureRoles, getRoleId } = require('../utils/roles');
 
 const router = express.Router();
 router.use(authenticate);
@@ -59,10 +60,15 @@ router.post('/', requireRole('super_admin', 'exam_officer'),
       const b = req.body;
       const result = await withTransaction(async (client) => {
         const hash = await bcrypt.hash(b.password, 10);
+        // Roles may be empty if the seed never ran — ensure them first,
+        // otherwise the role subselect returns NULL and the insert fails
+        // on users.role_id NOT NULL (same bug as setup-first-admin).
+        await ensureRoles(client);
+        const roleId = await getRoleId(client, 'lecturer');
         const user = await client.query(
           `INSERT INTO users (role_id, full_name, email, password_hash, phone)
-           VALUES ((SELECT id FROM roles WHERE name='lecturer'), $1, $2, $3, $4) RETURNING id`,
-          [b.full_name, b.email.toLowerCase(), hash, b.phone || null]);
+           VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+          [roleId, b.full_name, b.email.toLowerCase(), hash, b.phone || null]);
         const lecturer = await client.query(
           `INSERT INTO lecturers (user_id, department_id, employee_id, full_name, email, phone, gender,
               designation, qualification, joining_date)

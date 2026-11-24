@@ -1,10 +1,11 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { body } = require('express-validator');
-const { query } = require('../config/db');
+const { query, withTransaction } = require('../config/db');
 const { signToken, authenticate } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
+const { ensureRoles, getRoleId } = require('../utils/roles');
 
 const router = express.Router();
 
@@ -48,18 +49,30 @@ router.post(
   validate,
   async (req, res, next) => {
     try {
-      const count = await query('SELECT count(*)::int AS n FROM users');
-      if (count.rows[0].n > 0) {
+      const { full_name, email, password } = req.body;
+      // One-time guard + role seeding + insert in one transaction. The
+      // roles table is empty on a database that ran 001_init.sql without
+      // the 002 seed, so ensureRoles() first inserts the standard roles
+      // (super_admin, exam_officer, lecturer, student); without it the
+      // old `(SELECT id FROM roles ...)` subselect returned NULL and the
+      // users.role_id NOT NULL constraint failed.
+      const created = await withTransaction(async (client) => {
+        const count = await client.query('SELECT count(*)::int AS n FROM users');
+        if (count.rows[0].n > 0) return null;
+        await ensureRoles(client);
+        const roleId = await getRoleId(client, 'super_admin');
+        const hash = await bcrypt.hash(password, 10);
+        const { rows } = await client.query(
+          `INSERT INTO users (role_id, full_name, email, password_hash)
+           VALUES ($1, $2, $3, $4) RETURNING id, full_name, email`,
+          [roleId, full_name, email.toLowerCase(), hash],
+        );
+        return rows[0];
+      });
+      if (!created) {
         return res.status(403).json({ success: false, error: 'Setup already completed: users exist' });
       }
-      const { full_name, email, password } = req.body;
-      const hash = await bcrypt.hash(password, 10);
-      const { rows } = await query(
-        `INSERT INTO users (role_id, full_name, email, password_hash)
-         VALUES ((SELECT id FROM roles WHERE name='super_admin'), $1, $2, $3) RETURNING id, full_name, email`,
-        [full_name, email.toLowerCase(), hash],
-      );
-      return res.status(201).json({ success: true, data: rows[0] });
+      return res.status(201).json({ success: true, data: created });
     } catch (err) { return next(err); }
   },
 );
