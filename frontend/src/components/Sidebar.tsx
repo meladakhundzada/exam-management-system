@@ -66,7 +66,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
         }`}
       >
         <div className="flex items-center gap-3 px-5 py-5">
-          <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-xl font-bold text-navy-800">U</span>
+          <img src="/logo.png" alt="Alfalah University logo" className="h-10 w-10 rounded-lg bg-white object-contain p-0.5" />
           <div>
             <p className="text-sm font-bold leading-tight">University Exams</p>
             <p className="text-xs text-blue-200">Examination Department</p>

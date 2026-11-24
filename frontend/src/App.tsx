@@ -49,8 +49,9 @@ function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-navy-900 px-4">
       <form onSubmit={submit} className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl dark:bg-slate-800">
-        <h1 className="text-2xl font-bold text-navy-900 dark:text-white">University Exams</h1>
-        <p className="mt-1 text-sm text-slate-500">Examination Department Management System</p>
+        <img src="/logo.png" alt="Alfalah University logo" className="mx-auto h-[72px] w-[72px] rounded-xl object-contain" />
+        <h1 className="mt-4 text-center text-2xl font-bold text-navy-900 dark:text-white">University Exams</h1>
+        <p className="mt-1 text-center text-sm text-slate-500">Examination Department Management System</p>
         {error && (
           <div role="alert" className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">
             {error}
