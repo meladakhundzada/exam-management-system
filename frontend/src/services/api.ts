@@ -138,10 +138,31 @@ export interface Student {
   departmentName: string;
   facultyName: string;
   academicYear: string;
+  admissionYear: number;
+  gender?: string;
   semester: number;
   status: 'ACTIVE' | 'SUSPENDED' | 'GRADUATED' | 'WITHDRAWN';
   enrollmentDate: string;
 }
+
+// Payloads for POST/PUT /api/students — the backend expects snake_case.
+// (The old code sent the camelCase Student shape, which the backend
+// rejected: department_id must be an integer and password is required.)
+export interface CreateStudentPayload {
+  student_id: string;
+  full_name: string;
+  email: string;
+  phone?: string;
+  department_id: number;
+  admission_year: number;
+  current_semester?: number;
+  gender?: 'male' | 'female' | 'other';
+  password: string;
+}
+
+export type UpdateStudentPayload = Omit<CreateStudentPayload, 'password'> & {
+  status?: 'active' | 'suspended' | 'graduated' | 'dropped';
+};
 
 export interface Exam {
   id: string;
@@ -164,9 +185,9 @@ export const studentsApi = {
   list: (params: PaginatedParams = {}) =>
     api.get<ApiResponse<Student[]>>(`/students?${buildQuery(params)}`),
   get: (id: string) => api.get<ApiResponse<Student>>(`/students/${id}`),
-  create: (payload: Omit<Student, 'id' | 'departmentName' | 'facultyName'>) =>
+  create: (payload: CreateStudentPayload) =>
     api.post<ApiResponse<Student>>('/students', payload),
-  update: (id: string, payload: Partial<Student>) =>
+  update: (id: string, payload: UpdateStudentPayload) =>
     api.put<ApiResponse<Student>>(`/students/${id}`, payload),
   remove: (id: string) => api.delete(`/students/${id}`),
   exportCsv: () => api.get('/students/export?format=csv', { responseType: 'blob' }),

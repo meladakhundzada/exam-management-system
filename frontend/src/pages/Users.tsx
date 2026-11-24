@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  usersApi, departmentsApi, apiErrorMessage,
+  usersApi, studentsApi, departmentsApi, apiErrorMessage,
   AppUser, UserRole, CreateUserPayload,
 } from '../services/api';
 import { useAuth, ROLE_LABELS } from '../context/AuthContext';
+import { nextStudentId } from '../utils/studentId';
+
+const CURRENT_YEAR = new Date().getFullYear();
 
 const ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
   { value: 'super_admin', label: 'Super Admin' },
@@ -39,6 +42,12 @@ export default function Users() {
   const [createForm, setCreateForm] = useState<CreateUserPayload>({
     full_name: '', email: '', password: '', role: 'exam_officer',
   });
+  // Student numbers for auto-generation (loaded once; null = list unavailable).
+  const [studentNos, setStudentNos] = useState<string[] | null>(null);
+  // True while the Student ID field still holds our auto-generated value
+  // (not something the user typed) — so it can be recomputed once the
+  // student list finishes loading.
+  const studentIdAuto = useRef(false);
   const [editTarget, setEditTarget] = useState<AppUser | null>(null);
   const [editForm, setEditForm] = useState({ full_name: '', phone: '', role: 'exam_officer' as UserRole, is_active: true });
 
@@ -57,9 +66,35 @@ export default function Users() {
     departmentsApi.list()
       .then(({ data }) => setDepartments(data.data))
       .catch(() => setDepartments([]));
+    studentsApi.list({ limit: 500 })
+      .then(({ data }) => setStudentNos((data.data as unknown as Array<Record<string, unknown>>).map((r) => String(r.student_id ?? ''))))
+      .catch(() => setStudentNos(null));
     load(1);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, []);
+
+  // When Student is chosen, prefill the next auto student number and the
+  // current admission year — the user can still type a different ID.
+  useEffect(() => {
+    if (createForm.role === 'student' && !createForm.student_id) {
+      studentIdAuto.current = true;
+      setCreateForm((f) => ({
+        ...f,
+        student_id: nextStudentId(studentNos, CURRENT_YEAR),
+        admission_year: f.admission_year ?? CURRENT_YEAR,
+      }));
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [createForm.role]);
+
+  // Recompute the auto ID once the student list arrives (it may load after
+  // the role was chosen); never overwrite a manually typed ID.
+  useEffect(() => {
+    if (createForm.role === 'student' && studentIdAuto.current && studentNos !== null) {
+      setCreateForm((f) => ({ ...f, student_id: nextStudentId(studentNos, CURRENT_YEAR) }));
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [studentNos]);
 
   useEffect(() => {
     const t = setTimeout(() => { load(1); }, 400);
@@ -74,9 +109,14 @@ export default function Users() {
     if (createForm.full_name.trim().length < 2) { setFormError('Full name is required.'); return; }
     if (createForm.password.length < 8) { setFormError('Password must be at least 8 characters.'); return; }
     if (needsDepartment && !createForm.department_id) { setFormError('Choose a department for a lecturer or student account.'); return; }
-    if (createForm.role === 'student' && (!createForm.student_id || !createForm.admission_year)) {
-      setFormError('Student ID and admission year are required for a student account.'); return;
-    }
+    // Student ID / admission year are auto-generated when left blank:
+    // next STU-<year>-NNN from the existing students, current year.
+    const studentId = createForm.role === 'student'
+      ? (createForm.student_id?.trim() || nextStudentId(studentNos, CURRENT_YEAR))
+      : undefined;
+    const admissionYear = createForm.role === 'student'
+      ? (createForm.admission_year ?? CURRENT_YEAR)
+      : undefined;
     setSaving(true);
     try {
       const payload: CreateUserPayload = {
@@ -87,13 +127,16 @@ export default function Users() {
         phone: createForm.phone || undefined,
         department_id: createForm.department_id,
         employee_id: createForm.employee_id || undefined,
-        student_id: createForm.student_id || undefined,
-        admission_year: createForm.admission_year,
+        student_id: studentId,
+        admission_year: admissionYear,
         current_semester: createForm.current_semester,
       };
       const { data } = await usersApi.create(payload);
       setNotice(`User ${data.data.email} created as ${ROLE_LABELS[data.data.role as keyof typeof ROLE_LABELS] ?? data.data.role}.`);
       setCreateForm({ full_name: '', email: '', password: '', role: 'exam_officer' });
+      studentIdAuto.current = false;
+      // Keep the auto-ID source fresh for the next student.
+      if (studentId) setStudentNos((prev) => (prev ? [...prev, studentId] : prev));
       setFormError(null);
       await load(1);
     } catch (err) { setFormError(apiErrorMessage(err)); } finally { setSaving(false); }
@@ -187,11 +230,11 @@ export default function Users() {
               )}
               {createForm.role === 'student' && (
                 <div className="grid grid-cols-2 gap-3">
-                  <label className="mt-3 block text-sm font-medium">Student ID
-                    <input value={createForm.student_id ?? ''} onChange={(e) => setCreateForm({ ...createForm, student_id: e.target.value })} placeholder="STU-2024-001" className={inputCls} />
+                  <label className="mt-3 block text-sm font-medium">Student ID (auto — leave blank to generate)
+                    <input value={createForm.student_id ?? ''} onChange={(e) => { studentIdAuto.current = false; setCreateForm({ ...createForm, student_id: e.target.value }); }} placeholder={`e.g. STU-${CURRENT_YEAR}-001`} className={inputCls} />
                   </label>
                   <label className="mt-3 block text-sm font-medium">Admission year
-                    <input type="number" min={2000} max={2100} value={createForm.admission_year ?? ''} onChange={(e) => setCreateForm({ ...createForm, admission_year: e.target.value ? Number(e.target.value) : undefined })} className={inputCls} />
+                    <input type="number" min={2000} max={2100} value={createForm.admission_year ?? CURRENT_YEAR} onChange={(e) => setCreateForm({ ...createForm, admission_year: e.target.value ? Number(e.target.value) : undefined })} className={inputCls} />
                   </label>
                 </div>
               )}

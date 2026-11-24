@@ -31,9 +31,19 @@ router.get('/dashboard', async (req, res, next) => {
         LEFT JOIN students s ON s.department_id = d.id GROUP BY d.name ORDER BY students DESC`);
     const gradeDist = await query(
       `SELECT grade, count(*)::int AS count FROM results WHERE is_published GROUP BY grade ORDER BY grade`);
+    // Privacy rule (same as GET /api/dashboard/activity): Super Admin sees
+    // everyone's recent activity; every other role sees only their own
+    // entries, so one user's logins/actions never leak to another role.
+    const recentParams = [];
+    let recentClause = '';
+    if (req.user.role !== 'super_admin') {
+      recentParams.push(req.user.id);
+      recentClause = 'WHERE a.user_id = $1';
+    }
     const recent = await query(
       `SELECT a.action, a.entity_type, a.created_at, u.full_name AS user_name
-         FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.created_at DESC LIMIT 10`);
+         FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ${recentClause} ORDER BY a.created_at DESC LIMIT 10`,
+      recentParams);
     return res.json({ success: true, data: { ...counts.rows[0], students_by_department: byDept.rows, grade_distribution: gradeDist.rows, recent_activities: recent.rows } });
   } catch (err) { return next(err); }
 });

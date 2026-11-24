@@ -111,13 +111,15 @@ router.get('/stats', async (req, res, next) => {
 });
 
 // GET /api/dashboard/activity?limit=10 — recent audit-log entries.
-// Staff see everything; lecturers/students see only their own actions.
+// Privacy rule: every role sees ONLY their own activity entries, except
+// Super Admin who sees all entries (e.g. the Exam Officer must not see
+// the Super Admin's logins or user-management actions).
 router.get('/activity', async (req, res, next) => {
   try {
     const limit = Math.min(Math.max(Number(req.query.limit) || 10, 1), 50);
     const params = [limit];
     let clause = '';
-    if (req.user.role === 'lecturer' || req.user.role === 'student') {
+    if (req.user.role !== 'super_admin') {
       params.push(req.user.id);
       clause = 'WHERE a.user_id = $2';
     }

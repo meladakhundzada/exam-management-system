@@ -234,7 +234,7 @@ E 50–59.99 → 0.50, F 0–49.99 → 0.00). GPA = Σ(grade_point × credit_hou
 
 | Method & path | Roles | Description |
 |---|---|---|
-| `GET /api/reports/dashboard` | any | Counts + `students_by_department`, `grade_distribution`, `recent_activities` |
+| `GET /api/reports/dashboard` | any | Counts + `students_by_department`, `grade_distribution`, `recent_activities` (Super Admin sees all recent activity; every other role sees only their own entries) |
 | `GET /api/reports/students/export?format=xlsx\|pdf&department_id=` | super_admin, exam_officer | Student list download (XLSX default) |
 | `GET /api/reports/exams/:examId/schedule/export?format=xlsx\|pdf` | super_admin, exam_officer | Timetable download |
 | `GET /api/reports/results/:examId/export?format=xlsx\|pdf&department_id=` | super_admin, exam_officer | Published results download |
@@ -331,7 +331,7 @@ own subjects, students see only their own enrolments/results.
 | Method & path | Roles | Description |
 |---|---|---|
 | `GET /api/dashboard/stats` | any | Counts + chart data in camelCase: `{ totalStudents, totalLecturers, totalDepartments, totalSubjects, upcomingExams, completedExams, publishedResults, pendingMarks, examsByStatus: [{ status, count }], resultsByDepartment: [{ department, averageGpa, passRate }], monthlyExams: [{ month, scheduled, completed }] }`. `examsByStatus` uses uppercase statuses (`DRAFT`, `SCHEDULED`, …); `monthlyExams` covers the last 6 months by exam `start_date`; `passRate` = % of published results with `grade_point >= 1` (grade D or better) |
-| `GET /api/dashboard/activity?limit=10` | any | Recent audit-log entries `[{ id, actorName, action, entity, createdAt }]`; staff see all, lecturers/students see only their own actions. `limit` is capped at 50 |
+| `GET /api/dashboard/activity?limit=10` | any | Recent audit-log entries `[{ id, actorName, action, entity, createdAt }]`; Super Admin sees all entries, every other role sees only their own entries. `limit` is capped at 50 |
 
 ## Audit logging
 

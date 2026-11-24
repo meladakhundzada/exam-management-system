@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import DataTable, { Column } from '../components/DataTable';
-import { studentsApi, Student, apiErrorMessage, downloadBlob } from '../services/api';
+import {
+  studentsApi, departmentsApi, Department, Student,
+  CreateStudentPayload, UpdateStudentPayload,
+  apiErrorMessage, downloadBlob,
+} from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { nextStudentId } from '../utils/studentId';
 
 const STATUS_BADGE: Record<Student['status'], string> = {
   ACTIVE: 'bg-emerald-100 text-emerald-700',
@@ -10,55 +16,154 @@ const STATUS_BADGE: Record<Student['status'], string> = {
   WITHDRAWN: 'bg-red-100 text-red-700',
 };
 
+// Backend status values (lowercase) -> display values (uppercase).
+const toDisplayStatus = (s: string): Student['status'] => {
+  switch ((s ?? '').toLowerCase()) {
+    case 'suspended': return 'SUSPENDED';
+    case 'graduated': return 'GRADUATED';
+    case 'dropped': return 'WITHDRAWN';
+    default: return 'ACTIVE';
+  }
+};
+
+const toBackendStatus = (s: Student['status']): UpdateStudentPayload['status'] => {
+  switch (s) {
+    case 'SUSPENDED': return 'suspended';
+    case 'GRADUATED': return 'graduated';
+    case 'WITHDRAWN': return 'dropped';
+    default: return 'active';
+  }
+};
+
+// The backend returns snake_case rows (pg); map them to the camelCase
+// shape this page renders. Without this the table showed empty cells.
+type StudentRow = Record<string, unknown>;
+const mapStudent = (r: StudentRow): Student => {
+  const admissionYear = Number(r.admission_year ?? new Date().getFullYear());
+  return {
+    id: String(r.id),
+    studentNo: String(r.student_id ?? ''),
+    fullName: String(r.full_name ?? ''),
+    email: String(r.email ?? ''),
+    phone: (r.phone as string | undefined) ?? undefined,
+    departmentId: String(r.department_id ?? ''),
+    departmentName: String(r.department_name ?? ''),
+    facultyName: String(r.faculty_name ?? ''),
+    academicYear: `${admissionYear}-${admissionYear + 1}`,
+    admissionYear,
+    gender: (r.gender as string | undefined) ?? undefined,
+    semester: Number(r.current_semester ?? 1),
+    status: toDisplayStatus(String(r.status ?? 'active')),
+    enrollmentDate: String(r.created_at ?? ''),
+  };
+};
+
+const CURRENT_YEAR = new Date().getFullYear();
+
+interface FormState {
+  studentNo: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  departmentId: string;
+  admissionYear: number;
+  semester: number;
+  gender: '' | 'male' | 'female' | 'other';
+  password: string;
+}
+
+const emptyForm = (studentNo: string): FormState => ({
+  studentNo,
+  fullName: '',
+  email: '',
+  phone: '',
+  departmentId: '',
+  admissionYear: CURRENT_YEAR,
+  semester: 1,
+  gender: '',
+  password: '',
+});
+
 export default function Students() {
   const { hasRole } = useAuth();
   const canManage = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
   const [students, setStudents] = useState<Student[]>([]);
+  const [studentsLoaded, setStudentsLoaded] = useState(false);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Student | null>(null);
-  const [form, setForm] = useState({ studentNo: '', fullName: '', email: '', phone: '', departmentId: '', academicYear: '2025-2026', semester: 1 });
+  const [form, setForm] = useState<FormState>(() => emptyForm(`STU-${CURRENT_YEAR}-001`));
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
+  // Next auto student number from the loaded list (null = list unavailable,
+  // so the helper falls back to a timestamp suffix).
+  const nextId = (list: Student[] | null) =>
+    nextStudentId(list ? list.map((s) => s.studentNo) : null, CURRENT_YEAR);
+
+  const load = async (): Promise<Student[]> => {
     setLoading(true);
     try {
       const { data } = await studentsApi.list({ limit: 500 });
-      setStudents(data.data);
+      const rows = (data.data as unknown as StudentRow[]).map(mapStudent);
+      setStudents(rows);
+      setStudentsLoaded(true);
       setError(null);
+      return rows;
     } catch (err) {
       setError(apiErrorMessage(err));
+      setStudentsLoaded(false);
+      return [];
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    departmentsApi.list()
+      .then(({ data }) => setDepartments(data.data))
+      .catch(() => setDepartments([]));
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, []);
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ studentNo: '', fullName: '', email: '', phone: '', departmentId: '', academicYear: '2025-2026', semester: 1 });
+    // Auto-generate the next student number — the user never types it.
+    setForm(emptyForm(nextId(studentsLoaded ? students : null)));
     setFormError(null);
     setFormOpen(true);
   };
 
   const openEdit = (s: Student) => {
     setEditing(s);
-    setForm({ studentNo: s.studentNo, fullName: s.fullName, email: s.email, phone: s.phone ?? '', departmentId: s.departmentId, academicYear: s.academicYear, semester: s.semester });
+    setForm({
+      studentNo: s.studentNo,
+      fullName: s.fullName,
+      email: s.email,
+      phone: s.phone ?? '',
+      departmentId: s.departmentId,
+      admissionYear: s.admissionYear,
+      semester: s.semester,
+      gender: (s.gender as FormState['gender']) ?? '',
+      password: '',
+    });
     setFormError(null);
     setFormOpen(true);
   };
 
   const validate = () => {
-    if (!/^[A-Za-z0-9-]{4,20}$/.test(form.studentNo)) return 'Student number must be 4–20 letters, digits or hyphens.';
+    if (!/^[A-Za-z0-9-]{4,20}$/.test(form.studentNo)) return 'Student number could not be generated — please reload the page and try again.';
     if (form.fullName.trim().length < 3) return 'Full name is required (at least 3 characters).';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return 'Enter a valid email address.';
     if (!form.departmentId) return 'Choose a department.';
+    if (form.admissionYear < 2000 || form.admissionYear > 2100) return 'Admission year must be between 2000 and 2100.';
     if (form.semester < 1 || form.semester > 8) return 'Semester must be between 1 and 8.';
+    if (!editing && form.password.length < 8) return 'Password must be at least 8 characters (the student signs in with it).';
     return null;
   };
 
@@ -68,11 +173,41 @@ export default function Students() {
     if (v) { setFormError(v); return; }
     setSaving(true);
     try {
-      if (editing) await studentsApi.update(editing.id, { ...form, status: editing.status });
-      else await studentsApi.create({ ...form, status: 'ACTIVE', enrollmentDate: new Date().toISOString().slice(0, 10) });
-      setNotice(editing ? `Student ${form.studentNo} updated.` : `Student ${form.studentNo} registered.`);
+      if (editing) {
+        // PUT requires the full validated set (student_id included).
+        const payload: UpdateStudentPayload = {
+          student_id: form.studentNo,
+          full_name: form.fullName.trim(),
+          email: form.email.trim().toLowerCase(),
+          phone: form.phone || undefined,
+          department_id: Number(form.departmentId),
+          admission_year: form.admissionYear,
+          current_semester: form.semester,
+          gender: form.gender || undefined,
+          status: toBackendStatus(editing.status),
+        };
+        await studentsApi.update(editing.id, payload);
+        setNotice(`Student ${form.studentNo} updated.`);
+      } else {
+        const payload: CreateStudentPayload = {
+          student_id: form.studentNo,
+          full_name: form.fullName.trim(),
+          email: form.email.trim().toLowerCase(),
+          phone: form.phone || undefined,
+          department_id: Number(form.departmentId),
+          admission_year: form.admissionYear,
+          current_semester: form.semester,
+          gender: form.gender || undefined,
+          password: form.password,
+        };
+        await studentsApi.create(payload);
+        setNotice(`Student ${form.studentNo} registered.`);
+      }
       setFormOpen(false);
-      await load();
+      // Reload, then reset the form with the NEXT auto number so the
+      // following registration continues the sequence.
+      const rows = await load();
+      setForm(emptyForm(nextId(rows)));
     } catch (err) {
       setFormError(apiErrorMessage(err));
     } finally {
@@ -119,7 +254,7 @@ export default function Students() {
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold">Students</h1>
-          <p className="text-sm text-slate-500">Register and manage students. Student numbers and emails must be unique.</p>
+          <p className="text-sm text-slate-500">Register and manage students. Student numbers are generated automatically and emails must be unique.</p>
         </div>
         <div className="ml-auto flex gap-2">
           <button onClick={exportCsv} className="rounded-lg border bg-white px-3 py-2 text-sm dark:bg-slate-800">Export CSV</button>
@@ -152,12 +287,12 @@ export default function Students() {
 
       {formOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Student form">
-          <form onSubmit={submit} className="w-full max-w-lg rounded-xl bg-white p-6 dark:bg-slate-800">
+          <form onSubmit={submit} className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 dark:bg-slate-800">
             <h2 className="text-lg font-bold">{editing ? 'Edit student' : 'Register student'}</h2>
             {formError && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>}
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <label className="text-sm font-medium">Student No.
-                <input required value={form.studentNo} onChange={(e) => setForm({ ...form, studentNo: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2" />
+              <label className="text-sm font-medium">Student No. (auto-generated)
+                <input readOnly value={form.studentNo} title="Generated automatically — you do not need to type it" className="mt-1 w-full rounded-lg border bg-slate-50 px-3 py-2 dark:bg-slate-900" />
               </label>
               <label className="text-sm font-medium">Full name
                 <input required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2" />
@@ -168,12 +303,36 @@ export default function Students() {
               <label className="text-sm font-medium">Phone
                 <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2" />
               </label>
-              <label className="text-sm font-medium">Department ID
-                <input required value={form.departmentId} onChange={(e) => setForm({ ...form, departmentId: e.target.value })} placeholder="e.g. dept-cs-01" className="mt-1 w-full rounded-lg border px-3 py-2" />
+              <label className="text-sm font-medium">Department
+                <select required value={form.departmentId} onChange={(e) => setForm({ ...form, departmentId: e.target.value })} className="mt-1 w-full rounded-lg border px-3 py-2">
+                  <option value="">Choose a department…</option>
+                  {departments.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
+                </select>
+              </label>
+              {!departments.length && (
+                <p className="text-xs text-amber-700 sm:col-span-2">
+                  No departments exist yet — <Link to="/departments" className="font-medium text-navy-600 hover:underline">create one on the Departments page</Link> first.
+                </p>
+              )}
+              <label className="text-sm font-medium">Admission year
+                <input required type="number" min={2000} max={2100} value={form.admissionYear} onChange={(e) => setForm({ ...form, admissionYear: Number(e.target.value) })} className="mt-1 w-full rounded-lg border px-3 py-2" />
               </label>
               <label className="text-sm font-medium">Semester (1–8)
                 <input required type="number" min={1} max={8} value={form.semester} onChange={(e) => setForm({ ...form, semester: Number(e.target.value) })} className="mt-1 w-full rounded-lg border px-3 py-2" />
               </label>
+              <label className="text-sm font-medium">Gender
+                <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value as FormState['gender'] })} className="mt-1 w-full rounded-lg border px-3 py-2">
+                  <option value="">Not specified</option>
+                  <option value="male">Male</option>
+                  <option value="female">Female</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              {!editing && (
+                <label className="text-sm font-medium">Password (at least 8 characters)
+                  <input required type="password" minLength={8} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" className="mt-1 w-full rounded-lg border px-3 py-2" />
+                </label>
+              )}
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <button type="button" onClick={() => setFormOpen(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
