@@ -350,6 +350,47 @@ export const referenceApi = {
   }>>('/reference'),
 };
 
+// --- Departments & faculties (backend returns snake_case rows, as sent by pg) ---
+export interface Department {
+  id: number;
+  faculty_id: number;
+  faculty_name: string;
+  faculty_code: string;
+  name: string;
+  code: string;
+  head_name?: string | null;
+  description?: string | null;
+  is_active: boolean;
+}
+
+export interface Faculty {
+  id: number;
+  name: string;
+  code: string;
+  dean_name?: string | null;
+}
+
+export interface CreateDepartmentPayload {
+  name: string;
+  code: string;
+  faculty_id?: number;
+  faculty_name?: string;
+  faculty_code?: string;
+  head_name?: string;
+  description?: string;
+}
+
+export const departmentsApi = {
+  list: () => api.get<ApiResponse<Department[]>>('/departments'),
+  create: (payload: CreateDepartmentPayload) =>
+    api.post<ApiResponse<Department>>('/departments', payload),
+  remove: (id: number) => api.delete<ApiResponse<{ message: string }>>(`/departments/${id}`),
+};
+
+export const facultiesApi = {
+  list: () => api.get<ApiResponse<Faculty[]>>('/departments/faculties'),
+};
+
 export const dashboardApi = {
   stats: () => api.get<ApiResponse<DashboardStats>>('/dashboard/stats'),
   recentActivity: () => api.get<ApiResponse<ActivityItem[]>>('/dashboard/activity?limit=10'),

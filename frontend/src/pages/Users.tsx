@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
-  usersApi, referenceApi, apiErrorMessage,
+  usersApi, departmentsApi, apiErrorMessage,
   AppUser, UserRole, CreateUserPayload,
 } from '../services/api';
 import { useAuth, ROLE_LABELS } from '../context/AuthContext';
@@ -53,8 +54,8 @@ export default function Users() {
   };
 
   useEffect(() => {
-    referenceApi.get()
-      .then(({ data }) => setDepartments(data.data.departments))
+    departmentsApi.list()
+      .then(({ data }) => setDepartments(data.data))
       .catch(() => setDepartments([]));
     load(1);
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
@@ -174,6 +175,11 @@ export default function Users() {
                   {departments.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.code})</option>)}
                 </select>
               </label>
+              {!departments.length && (
+                <p className="mt-2 text-xs text-amber-700">
+                  No departments exist yet — <Link to="/departments" className="font-medium text-navy-600 hover:underline">create one on the Departments page</Link> first, then come back here.
+                </p>
+              )}
               {createForm.role === 'lecturer' && (
                 <label className="mt-3 block text-sm font-medium">Employee ID (optional — auto-generated like LEC-008; use LEC-007 to link Eng Irfan)
                   <input value={createForm.employee_id ?? ''} onChange={(e) => setCreateForm({ ...createForm, employee_id: e.target.value })} placeholder="LEC-007" className={inputCls} />

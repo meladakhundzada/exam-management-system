@@ -9,6 +9,7 @@ import Marks from './pages/Marks';
 import Results from './pages/Results';
 import Fees from './pages/Fees';
 import Users from './pages/Users';
+import Departments from './pages/Departments';
 import Setup from './pages/Setup';
 
 function LoginPage() {
@@ -126,7 +127,7 @@ function Layout() {
             <Route path="/results" element={<Results />} />
             <Route path="/fees" element={<Fees />} />
             <Route path="/lecturers" element={<Placeholder title="Lecturers" />} />
-            <Route path="/departments" element={<Placeholder title="Departments & Faculties" />} />
+            <Route path="/departments" element={<Departments />} />
             <Route path="/subjects" element={<Placeholder title="Subjects & Courses" />} />
             <Route path="/timetable" element={<Placeholder title="Examination Timetable" />} />
             <Route path="/attendance" element={<Placeholder title="Examination Attendance" />} />

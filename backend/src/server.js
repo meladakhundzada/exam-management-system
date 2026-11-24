@@ -35,6 +35,7 @@ app.use('/api/results', require('./routes/results'));
 app.use('/api/fees', require('./routes/fees'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/dashboard', require('./routes/dashboard'));
+app.use('/api/departments', require('./routes/departments'));
 app.use('/api/reports', require('./routes/reports'));
 
 // Reference data used by the frontend forms (faculties, departments,
