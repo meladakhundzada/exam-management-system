@@ -85,14 +85,12 @@ const emptyForm = (studentNo: string): FormState => ({
 });
 
 export default function Students() {
-  const { hasRole, user } = useAuth();
+  const { hasRole } = useAuth();
   const canManage = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
   // Lecturers are read-only here (Add / Edit / Delete are canManage-gated
-  // below) and see only students in their own department: GET /api/students
-  // allows lecturers but the backend returns every student with no
-  // per-subject scoping, and there is no enrollments-by-subject endpoint
-  // to scope it exactly (see report). Department is the closest
-  // server-supported scoping available from the frontend.
+  // below) and see only students in their own department or enrolled in
+  // one of their subjects — that scoping is enforced server-side by
+  // GET /api/students (see backend/src/utils/lecturerScope.js).
   const isLecturer = hasRole('LECTURER');
   const [students, setStudents] = useState<Student[]>([]);
   const [studentsLoaded, setStudentsLoaded] = useState(false);
@@ -116,10 +114,15 @@ export default function Students() {
     setLoading(true);
     try {
       const { data } = await studentsApi.list({ limit: 500 });
-      let rows = (data.data as unknown as StudentRow[]).map(mapStudent);
-      if (isLecturer && user?.departmentId) {
-        rows = rows.filter((s) => s.departmentId === user.departmentId);
-      }
+      // No client-side filter here: GET /api/students already scopes
+      // lecturers server-side (own department OR enrolled in one of their
+      // subjects). A previous client-side filter compared the row's
+      // departmentId (string, from mapStudent) with user.departmentId
+      // (number at runtime — /auth/me returns a Postgres int, and
+      // AuthContext only casts the type, it does not convert it), so
+      // "1" === 1 was false for every row and lecturers saw an empty
+      // table even though the backend returned their students.
+      const rows = (data.data as unknown as StudentRow[]).map(mapStudent);
       setStudents(rows);
       setStudentsLoaded(true);
       setError(null);

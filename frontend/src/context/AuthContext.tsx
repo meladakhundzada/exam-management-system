@@ -66,9 +66,13 @@ function normalizeAuthUser(raw: unknown): AuthUser {
     email: String(u.email ?? ''),
     fullName: String(u.fullName ?? u.full_name ?? ''),
     role: (ROLE_MAP[role] ?? role) as Role,
-    departmentId: (u.departmentId ?? u.department_id ?? null) as string | null,
-    studentId: (u.studentId ?? u.student_id ?? null) as string | null,
-    lecturerId: (u.lecturerId ?? u.lecturer_id ?? null) as string | null,
+    // /auth/me returns Postgres ints for the linked ids; convert them to
+    // strings for real — a bare `as string` cast leaves a number at
+    // runtime, which broke strict-equality comparisons downstream
+    // (e.g. Students page: "1" === 1 was false for every row).
+    departmentId: ((u.departmentId ?? u.department_id ?? null) == null ? null : String(u.departmentId ?? u.department_id)),
+    studentId: ((u.studentId ?? u.student_id ?? null) == null ? null : String(u.studentId ?? u.student_id)),
+    lecturerId: ((u.lecturerId ?? u.lecturer_id ?? null) == null ? null : String(u.lecturerId ?? u.lecturer_id)),
   };
 }
 
