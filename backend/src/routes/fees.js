@@ -195,10 +195,20 @@ router.post('/assign', requireRole(...STAFF),
         created = rows;
         if (!created.length) return res.status(409).json({ success: false, error: 'This fee is already assigned to the student for that year/semester' });
       } else {
+        // Cohort assign: semester_id is the semesters-table PK, but
+        // students.current_semester is the programme semester number
+        // (1–8), so resolve the PK to its number first — comparing the
+        // two directly matched almost nobody.
+        let semesterNumber = null;
+        if (b.semester_id) {
+          const sem = await query('SELECT semester_number FROM semesters WHERE id = $1', [b.semester_id]);
+          if (!sem.rows[0]) return res.status(400).json({ success: false, error: 'Semester not found' });
+          semesterNumber = sem.rows[0].semester_number;
+        }
         const cohort = await query(
           `SELECT id FROM students WHERE department_id = $1 AND status = 'active'
-            ${b.semester_id ? 'AND current_semester = $2' : ''}`,
-          b.semester_id ? [b.department_id, b.semester_id] : [b.department_id]);
+            ${semesterNumber !== null ? 'AND current_semester = $2' : ''}`,
+          semesterNumber !== null ? [b.department_id, semesterNumber] : [b.department_id]);
         created = [];
         for (const s of cohort.rows) {
           const { rows } = await query(
@@ -215,6 +225,138 @@ router.post('/assign', requireRole(...STAFF),
       return res.status(201).json({ success: true, data: created, count: created.length });
     } catch (err) { return next(err); }
   });
+
+// PATCH /api/fees/types/:id — edit a fee type or activate/deactivate it
+// (staff only). Only the fields sent are changed.
+router.patch('/types/:id', requireRole(...STAFF), param('id').isInt({ min: 1 }),
+  [body('name').optional().trim().isLength({ min: 3, max: 100 }),
+   body('amount').optional().isFloat({ min: 0.01 }),
+   body('description').optional().trim(),
+   body('is_active').optional().isBoolean()], validate,
+  async (req, res, next) => {
+    try {
+      const sets = []; const params = [];
+      for (const f of ['name', 'amount', 'description', 'is_active']) {
+        if (req.body[f] !== undefined) { params.push(req.body[f]); sets.push(`${f} = $${params.length}`); }
+      }
+      if (!sets.length) return res.status(400).json({ success: false, error: 'Nothing to update' });
+      params.push(req.params.id);
+      const { rows } = await query(
+        `UPDATE fee_types SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+      if (!rows[0]) return res.status(404).json({ success: false, error: 'Fee type not found' });
+      await logAudit({ userId: req.user.id, action: 'fees.type_update', entityType: 'fee_types', entityId: rows[0].id, newValues: rows[0], req });
+      return res.json({ success: true, data: rows[0] });
+    } catch (err) {
+      if (err.code === '23505') return res.status(409).json({ success: false, error: 'A fee type with that name already exists' });
+      return next(err);
+    }
+  });
+
+// Shared payment-history query (staff only): payments joined to the fee,
+// student, fee type and the user who received the payment.
+const PAYMENTS_SELECT = `
+  SELECT fp.*, sf.student_id, s.student_id AS student_no, s.full_name AS student_name,
+         ft.name AS fee_type_name, u.full_name AS received_by_name
+    FROM fee_payments fp
+    JOIN student_fees sf ON sf.id = fp.student_fee_id
+    JOIN students s ON s.id = sf.student_id
+    JOIN fee_types ft ON ft.id = sf.fee_type_id
+    LEFT JOIN users u ON u.id = fp.received_by`;
+
+// GET /api/fees/payments — payment history (staff only).
+// Filters: ?search= (student name / student no. / receipt no.),
+// ?payment_method=, ?date_from=, ?date_to=, ?student_id=, ?page&limit.
+router.get('/payments', requireRole(...STAFF), async (req, res, next) => {
+  try {
+    const { page, limit, offset } = pagination(req);
+    const { search, payment_method, date_from, date_to, student_id } = req.query;
+    const where = []; const params = [];
+    if (search) { params.push(`%${search}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.student_id ILIKE $${params.length} OR fp.receipt_no ILIKE $${params.length})`); }
+    if (payment_method) { params.push(payment_method); where.push(`fp.payment_method = $${params.length}`); }
+    if (date_from) { params.push(date_from); where.push(`fp.payment_date >= $${params.length}`); }
+    if (date_to) { params.push(date_to); where.push(`fp.payment_date <= $${params.length}`); }
+    if (student_id) { params.push(student_id); where.push(`sf.student_id = $${params.length}`); }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = await query(
+      `SELECT count(*)::int AS n FROM fee_payments fp JOIN student_fees sf ON sf.id = fp.student_fee_id JOIN students s ON s.id = sf.student_id ${clause}`, params);
+    const { rows } = await query(
+      `${PAYMENTS_SELECT} ${clause} ORDER BY fp.payment_date DESC, fp.id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]);
+    const data = rows.map((r) => ({ ...r, amount: Number(r.amount) }));
+    return res.json(paginatedResponse(data, total.rows[0].n, { page, limit }));
+  } catch (err) { return next(err); }
+});
+
+// PATCH /api/fees/payments/:id — correct a payment record (staff only).
+// Changing the amount re-totals the parent fee (amount_paid + status) in
+// the same transaction, so the books can never drift from the payments.
+router.patch('/payments/:id', requireRole(...STAFF), param('id').isInt({ min: 1 }),
+  [body('amount').optional().isFloat({ min: 0.01 }),
+   body('payment_method').optional().isIn(['cash', 'bank', 'mobile_money', 'other']),
+   body('payment_date').optional().isISO8601(),
+   body('note').optional().trim()], validate,
+  async (req, res, next) => {
+    try {
+      const result = await withTransaction(async (client) => {
+        const pay = await client.query('SELECT * FROM fee_payments WHERE id = $1 FOR UPDATE', [req.params.id]);
+        if (!pay.rows[0]) return { status: 404, body: { success: false, error: 'Payment not found' } };
+        const old = pay.rows[0];
+        const fee = await client.query('SELECT * FROM student_fees WHERE id = $1 FOR UPDATE', [old.student_fee_id]);
+        if (!fee.rows[0]) return { status: 404, body: { success: false, error: 'Fee not found' } };
+        const newAmount = req.body.amount !== undefined ? Number(req.body.amount) : Number(old.amount);
+        const newPaid = Number(fee.rows[0].amount_paid) - Number(old.amount) + newAmount;
+        if (newPaid < 0 || newPaid > Number(fee.rows[0].amount_due)) {
+          return { status: 400, body: { success: false, error: `Corrected total paid (${newPaid} AFN) is outside the fee amount (${Number(fee.rows[0].amount_due)} AFN)` } };
+        }
+        const sets = []; const params = [];
+        if (req.body.amount !== undefined) { params.push(newAmount); sets.push(`amount = $${params.length}`); }
+        if (req.body.payment_method !== undefined) { params.push(req.body.payment_method); sets.push(`payment_method = $${params.length}`); }
+        if (req.body.payment_date !== undefined) { params.push(req.body.payment_date); sets.push(`payment_date = $${params.length}`); }
+        if (req.body.note !== undefined) { params.push(req.body.note || null); sets.push(`note = $${params.length}`); }
+        if (!sets.length) return { status: 400, body: { success: false, error: 'Nothing to update' } };
+        params.push(req.params.id);
+        const updated = await client.query(
+          `UPDATE fee_payments SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`, params);
+        const newStatus = newPaid >= Number(fee.rows[0].amount_due) ? 'paid' : newPaid > 0 ? 'partial' : 'unpaid';
+        await client.query('UPDATE student_fees SET amount_paid = $2, status = $3 WHERE id = $1',
+          [fee.rows[0].id, newPaid, newStatus]);
+        return { status: 200, body: { success: true, data: { ...updated.rows[0], amount: Number(updated.rows[0].amount) } } };
+      });
+      if (result.status === 200) {
+        await logAudit({ userId: req.user.id, action: 'fees.payment_update', entityType: 'fee_payments', entityId: Number(req.params.id), newValues: result.body.data, req });
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) { return next(err); }
+  });
+
+// GET /api/fees/export?format=csv — payment history as a CSV download
+// (staff only). Same filters as GET /api/fees/payments.
+router.get('/export', requireRole(...STAFF), async (req, res, next) => {
+  try {
+    const { search, payment_method, date_from, date_to, student_id } = req.query;
+    const where = []; const params = [];
+    if (search) { params.push(`%${search}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.student_id ILIKE $${params.length} OR fp.receipt_no ILIKE $${params.length})`); }
+    if (payment_method) { params.push(payment_method); where.push(`fp.payment_method = $${params.length}`); }
+    if (date_from) { params.push(date_from); where.push(`fp.payment_date >= $${params.length}`); }
+    if (date_to) { params.push(date_to); where.push(`fp.payment_date <= $${params.length}`); }
+    if (student_id) { params.push(student_id); where.push(`sf.student_id = $${params.length}`); }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const { rows } = await query(
+      `${PAYMENTS_SELECT} ${clause} ORDER BY fp.payment_date DESC, fp.id DESC`, params);
+    const csvCell = (v) => {
+      const s = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [['Receipt', 'Date', 'Student ID', 'Student', 'Fee type', 'Method', 'Amount (AFN)', 'Received by', 'Note'].join(',')];
+    for (const r of rows) {
+      lines.push([r.receipt_no, r.payment_date, r.student_no, r.student_name, r.fee_type_name,
+        r.payment_method, Number(r.amount), r.received_by_name || '', r.note || ''].map(csvCell).join(','));
+    }
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="payment-history.csv"');
+    return res.send(`\ufeff${lines.join('\r\n')}`);
+  } catch (err) { return next(err); }
+});
 
 // GET /api/fees/:id — one fee with its payments (used for the receipt view).
 router.get('/:id', param('id').isInt({ min: 1 }), validate, async (req, res, next) => {

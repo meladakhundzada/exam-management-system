@@ -499,10 +499,18 @@ export interface FeeReport {
   by_fee_type: Array<{ fee_type: string; total_due: number; total_collected: number; outstanding: number; fee_count: number }>;
 }
 
+export interface FeePaymentRecord extends FeePayment {
+  student_name: string;
+  student_no: string;
+  fee_type_name: string;
+}
+
 export const feesApi = {
   types: () => api.get<ApiResponse<FeeType[]>>('/fees/types'),
   createType: (payload: { name: string; amount: number; description?: string; department_id?: number; semester_id?: number; academic_year_id?: number }) =>
     api.post<ApiResponse<FeeType>>('/fees/types', payload),
+  updateType: (id: number, payload: { name?: string; amount?: number; description?: string; is_active?: boolean }) =>
+    api.patch<ApiResponse<FeeType>>(`/fees/types/${id}`, payload),
   byStudent: (studentId: string | number) =>
     api.get<ApiResponse<{ fees: StudentFee[]; totals: { total_due: number; total_paid: number; outstanding: number } }>>(`/fees/student/${studentId}`),
   due: (params: PaginatedParams = {}) =>
@@ -514,6 +522,12 @@ export const feesApi = {
   get: (id: number) => api.get<ApiResponse<StudentFee>>(`/fees/${id}`),
   pay: (id: number, payload: { amount: number; payment_method?: string; payment_date?: string; note?: string }) =>
     api.post<ApiResponse<{ payment: FeePayment; fee: StudentFee }>>(`/fees/${id}/pay`, payload),
+  payments: (params: PaginatedParams = {}) =>
+    api.get<ApiResponse<FeePaymentRecord[]>>(`/fees/payments?${buildQuery(params)}`),
+  updatePayment: (id: number, payload: { amount?: number; payment_method?: string; payment_date?: string; note?: string }) =>
+    api.patch<ApiResponse<FeePayment>>(`/fees/payments/${id}`, payload),
+  exportPayments: (params: PaginatedParams = {}) =>
+    api.get(`/fees/export?${buildQuery(params)}`, { responseType: 'blob' }),
 };
 
 // --- Users (Super Admin only) ---

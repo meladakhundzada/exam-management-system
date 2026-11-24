@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  reportsApi, examsApi, departmentsApi, ReportDashboard,
+  reportsApi, examsApi, departmentsApi, feesApi, ReportDashboard,
   apiErrorMessage, downloadBlob,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -17,6 +17,12 @@ export default function Reports() {
   // results exports are open to lecturers for their own subjects' exams,
   // and the admit-card / individual result-sheet PDFs stay available.
   const isLecturer = hasRole('LECTURER');
+  // Finance can open this page too, but the student-list, schedule and
+  // published-results exports are STAFF/lecturer-only on the backend and
+  // would 403 — so they are hidden here for Finance, and Finance gets a
+  // financial report (payment history CSV) instead. Admit-card and
+  // result-sheet downloads are open to every authenticated role.
+  const isFinance = hasRole('FINANCE');
   const [stats, setStats] = useState<ReportDashboard | null>(null);
   const [exams, setExams] = useState<Array<{ id: number; title: string }>>([]);
   const [departments, setDepartments] = useState<Array<{ id: number; name: string }>>([]);
@@ -138,7 +144,15 @@ export default function Reports() {
 
       <h2 className="pt-2 text-lg font-bold">Exports</h2>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {!isLecturer && (
+        {isFinance && (
+        <div className="space-y-3 rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
+          <h3 className="font-bold">Financial report</h3>
+          <p className="text-sm text-slate-500">Full payment history (receipt, date, student, fee type, method, amount) as a CSV file, for the whole university.</p>
+          <button disabled={busy !== null} onClick={() => runExport('fees-csv', () => feesApi.exportPayments({}), 'payment-history.csv')} className="rounded-lg bg-navy-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Download payment history (CSV)</button>
+        </div>
+        )}
+
+        {!isLecturer && !isFinance && (
         <div className="space-y-3 rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
           <h3 className="font-bold">Student list</h3>
           <label className="text-sm font-medium">Department (optional)
@@ -154,6 +168,7 @@ export default function Reports() {
         </div>
         )}
 
+        {!isFinance && (
         <div className="space-y-3 rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
           <h3 className="font-bold">Examination schedule</h3>
           <label className="text-sm font-medium">Examination
@@ -167,7 +182,9 @@ export default function Reports() {
             <button disabled={!scheduleExam || busy !== null} onClick={() => runExport('schedule-pdf', () => reportsApi.scheduleExport(Number(scheduleExam), 'pdf'), 'schedule.pdf')} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">PDF</button>
           </div>
         </div>
+        )}
 
+        {!isFinance && (
         <div className="space-y-3 rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
           <h3 className="font-bold">Published results</h3>
           <label className="text-sm font-medium">Examination
@@ -182,6 +199,7 @@ export default function Reports() {
           </div>
           <p className="text-xs text-slate-500">Only published results are exported.</p>
         </div>
+        )}
 
         <div className="space-y-3 rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
           <h3 className="font-bold">Admit card (PDF)</h3>
