@@ -6,29 +6,33 @@ interface NavItem {
   to: string;
   label: string;
   icon: string;
-  roles: Array<'SUPER_ADMIN' | 'EXAM_OFFICER' | 'FINANCE' | 'LECTURER' | 'STUDENT'>;
+  roles: Array<'SUPER_ADMIN' | 'EXAM_OFFICER' | 'FINANCE' | 'LECTURER' | 'STUDENT' | 'EXAM_CONTROLLER' | 'DEPARTMENT_HEAD' | 'INVIGILATOR'>;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT'] },
-  { to: '/profile', label: 'My Profile', icon: '👤', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT'] },
-  { to: '/students', label: 'Students', icon: '🎓', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
-  { to: '/lecturers', label: 'Lecturers', icon: '👩‍🏫', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
+  { to: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT', 'EXAM_CONTROLLER', 'DEPARTMENT_HEAD', 'INVIGILATOR'] },
+  { to: '/profile', label: 'My Profile', icon: '👤', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT', 'EXAM_CONTROLLER', 'DEPARTMENT_HEAD', 'INVIGILATOR'] },
+  { to: '/students', label: 'Students', icon: '🎓', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'DEPARTMENT_HEAD'] },
+  { to: '/lecturers', label: 'Lecturers', icon: '👩‍🏫', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'DEPARTMENT_HEAD'] },
   { to: '/departments', label: 'Departments', icon: '🏛️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
-  { to: '/subjects', label: 'Subjects', icon: '📚', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
-  { to: '/exams', label: 'Examinations', icon: '📝', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
-  { to: '/timetable', label: 'Timetable', icon: '🗓️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
+  { to: '/subjects', label: 'Subjects', icon: '📚', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'DEPARTMENT_HEAD'] },
+  { to: '/exams', label: 'Examinations', icon: '📝', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'EXAM_CONTROLLER', 'DEPARTMENT_HEAD'] },
+  { to: '/exam-management', label: 'Exam Management', icon: '🪑', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'EXAM_CONTROLLER'] },
+  { to: '/timetable', label: 'Timetable', icon: '🗓️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT', 'EXAM_CONTROLLER', 'DEPARTMENT_HEAD', 'INVIGILATOR'] },
+  { to: '/my-invigilation', label: 'My Invigilation Sessions', icon: '👁️', roles: ['INVIGILATOR'] },
   { to: '/my-courses', label: 'My Courses', icon: '📚', roles: ['STUDENT'] },
   { to: '/my-attendance', label: 'My Attendance', icon: '✅', roles: ['STUDENT'] },
-  { to: '/attendance', label: 'Attendance', icon: '✅', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
-  { to: '/marks', label: 'Marks Entry', icon: '✏️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
-  { to: '/results', label: 'Results', icon: '📊', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
+  { to: '/attendance', label: 'Attendance', icon: '✅', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'EXAM_CONTROLLER', 'INVIGILATOR'] },
+  { to: '/marks', label: 'Marks Entry', icon: '✏️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'EXAM_CONTROLLER'] },
+  { to: '/results', label: 'Results', icon: '📊', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT', 'EXAM_CONTROLLER', 'DEPARTMENT_HEAD'] },
   { to: '/fees', label: 'Fees', icon: '💰', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'STUDENT'] },
+  { to: '/pay-online', label: 'Pay Online', icon: '💳', roles: ['STUDENT'] },
   { to: '/scholarships', label: 'Scholarships', icon: '🎖️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE'] },
   { to: '/fines', label: 'Fines', icon: '⚠️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE'] },
+  { to: '/online-transactions', label: 'Online Transactions', icon: '🧾', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE'] },
   { to: '/admit-card', label: 'Admit Card', icon: '🎫', roles: ['STUDENT'] },
   { to: '/complaints', label: 'Complaints / Rechecking', icon: '🔍', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
-  { to: '/reports', label: 'Reports', icon: '📄', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER'] },
+  { to: '/reports', label: 'Reports', icon: '📄', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'EXAM_CONTROLLER', 'DEPARTMENT_HEAD'] },
   { to: '/notifications', label: 'Notifications', icon: '🔔', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/users', label: 'User Management', icon: '👥', roles: ['SUPER_ADMIN'] },
   { to: '/audit-logs', label: 'Audit Logs', icon: '🧾', roles: ['SUPER_ADMIN'] },

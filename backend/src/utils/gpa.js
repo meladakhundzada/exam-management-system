@@ -6,10 +6,21 @@
 // CGPA = same formula over ALL published results for the student.
 // Pass mark is grade_scale.is_passing (default: D/E and above pass, F fails).
 
-function gradeForMarks(marks, gradeScale) {
-  // gradeScale: [{grade, min_marks, max_marks, grade_point, is_passing}]
-  const row = gradeScale.find(
-    (g) => Number(marks) >= Number(g.min_marks) && Number(marks) <= Number(g.max_marks),
+function gradeForMarks(marks, totalMarks, gradeScale) {
+  // Backward-compatible: gradeForMarks(marks, gradeScale) — old 2-arg call
+  // treats the exam as out of 100.
+  if (Array.isArray(totalMarks)) { gradeScale = totalMarks; totalMarks = 100; }
+  const total = Number(totalMarks ?? 100);
+  const obtained = Number(marks);
+  if (!Number.isFinite(obtained) || !Number.isFinite(total) || total <= 0) return null;
+  // Grade bands are percentages (A 90–100, B 80–89, …): convert the mark
+  // to a percentage first, so an exam out of 50 or 200 grades the same as
+  // one out of 100. Previously the raw mark was compared to the bands, so
+  // 45/50 (90%) was graded F instead of A.
+  const pct = Math.round(((obtained / total) * 100) * 10000) / 10000;
+  if (pct < 0 || pct > 100) return null;
+  const row = (gradeScale || []).find(
+    (g) => pct >= Number(g.min_marks) && pct <= Number(g.max_marks),
   );
   return row || null;
 }

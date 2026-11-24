@@ -2,11 +2,26 @@
 // Token payload: { id, email, role, full_name } — signed with JWT_SECRET,
 // expires in JWT_EXPIRES_IN (default 8h). Role names come from roles.name:
 // super_admin | exam_officer | lecturer | student.
+//
+// JWT_SECRET hygiene: in production the server refuses to start without
+// an explicit JWT_SECRET — there is NO fallback secret in production.
+// In development only, a clearly-marked dev fallback is used so the app
+// can run locally without configuration; it must never be used with
+// real data. routes/auth.js imports JWT_SECRET from here instead of
+// carrying its own inline fallback.
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me-in-production';
-if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'dev-only-change-me-in-production') {
-  throw new Error('JWT_SECRET must be set in production');
+const DEV_FALLBACK_SECRET = 'dev-only-change-me-in-production';
+
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET must be set in production (no fallback secret is used in production)');
+}
+
+const JWT_SECRET = process.env.JWT_SECRET || DEV_FALLBACK_SECRET;
+
+if (!process.env.JWT_SECRET) {
+  // Reached only outside production (production throws above).
+  console.warn('[auth] WARNING: JWT_SECRET is not set — using a development-only fallback secret. Never use this in production.');
 }
 
 function signToken(user) {
@@ -59,4 +74,4 @@ function requirePermission(permissionName) {
   };
 }
 
-module.exports = { signToken, authenticate, requireRole, requirePermission };
+module.exports = { signToken, authenticate, requireRole, requirePermission, JWT_SECRET };

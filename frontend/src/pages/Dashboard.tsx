@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
   Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import StatCard from '../components/StatCard';
-import { dashboardApi, DashboardStats, StudentDashboardStats, ActivityItem, apiErrorMessage } from '../services/api';
+import { dashboardApi, DashboardStats, StudentDashboardStats, ActivityItem, apiErrorMessage, studentsApi, lecturersApi, subjectsApi } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -24,6 +25,18 @@ export default function Dashboard() {
   // non-admins (backend privacy rule).
   const isLecturer = hasRole('LECTURER');
   const isStudent = hasRole('STUDENT');
+  const isController = hasRole('EXAM_CONTROLLER');
+  const isDeptHead = hasRole('DEPARTMENT_HEAD');
+  const isInvigilator = hasRole('INVIGILATOR');
+  // Least privilege: GET /api/dashboard/stats currently returns
+  // SYSTEM-WIDE totals for any role the backend does not scope
+  // (dashboard.js scopedIds() only handles lecturer/student), so the
+  // Department Head and Invigilator must not even request it — their
+  // sections below load only their own scope, and the backend worker
+  // still has to scope the endpoint before these roles may call it.
+  // The Examination Controller monitors the whole system, so the
+  // system-wide stats are the correct scope for that role.
+  const needsStats = !isDeptHead && !isInvigilator;
   const [stats, setStats] = useState<DashboardStats | StudentDashboardStats | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,8 +46,11 @@ export default function Dashboard() {
     let cancelled = false;
     (async () => {
       try {
-        const [s, a] = await Promise.all([dashboardApi.stats(), dashboardApi.recentActivity()]);
-        if (!cancelled) { setStats(s.data.data); setActivity(a.data.data); }
+        const [s, a] = await Promise.all([
+          needsStats ? dashboardApi.stats() : Promise.resolve(null),
+          dashboardApi.recentActivity(),
+        ]);
+        if (!cancelled) { if (s) setStats(s.data.data); setActivity(a.data.data); }
       } catch (err) {
         if (!cancelled) setError(apiErrorMessage(err));
       } finally {
@@ -42,10 +58,11 @@ export default function Dashboard() {
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) return <p className="p-4">Loading dashboard…</p>;
-  if (error || !stats) {
+  if (error || (needsStats && !stats)) {
     return (
       <div role="alert" className="rounded-xl bg-red-50 p-6 text-red-700 dark:bg-red-900/30 dark:text-red-300">
         Could not load the dashboard: {error ?? 'No data returned.'}
@@ -62,15 +79,26 @@ export default function Dashboard() {
             ? 'Overview of your subjects, results and fees.'
             : isLecturer
               ? 'Overview of your subjects, examinations and pending marks.'
-              : 'Overview of examinations, results and pending work.'}
+              : isController
+                ? 'Overview of examinations, pending approvals and exam activity.'
+                : isDeptHead
+                  ? 'Overview of your department — students, lecturers and results.'
+                  : isInvigilator
+                    ? 'Overview of your assigned examination sessions.'
+                    : 'Overview of examinations, results and pending work.'}
         </p>
       </div>
 
       {isStudent ? (
         <StudentCards stats={stats as StudentDashboardStats} />
+      ) : isDeptHead ? (
+        <DeptHeadCards />
+      ) : isInvigilator ? (
+        <InvigilatorCards />
       ) : (
         <>
-          <StaffCards stats={stats as DashboardStats} isLecturer={isLecturer} />
+          {isController && <ControllerApprovals stats={stats as DashboardStats} />}
+          <StaffCards stats={stats as DashboardStats} isLecturer={isLecturer} isController={isController} />
           <Charts stats={stats as DashboardStats} isLecturer={isLecturer} />
         </>
       )}
@@ -109,9 +137,127 @@ function StudentCards({ stats }: { stats: StudentDashboardStats }) {
   );
 }
 
-// --- Staff / lecturer / finance view: the original 8 cards. Lecturer
-// labels stay scoped to their own subjects (see the backend scoping).
-function StaffCards({ stats, isLecturer }: { stats: DashboardStats; isLecturer: boolean }) {
+// --- Examination Controller view: pending approvals strip.
+// There is no separate schedule-approval workflow in the data model
+// yet: an examination in DRAFT status is one whose schedule is still
+// awaiting approval, and a submitted mark is one whose result is still
+// awaiting approval. Approval itself currently happens by changing the
+// exam status / approving marks on the Examinations and Marks pages —
+// those backend guards still need to admit the controller role.
+function ControllerApprovals({ stats }: { stats: DashboardStats }) {
+  const draftExams = stats.examsByStatus.find((e) => e.status === 'DRAFT')?.count ?? 0;
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <StatCard title="Pending Schedule Approvals" value={draftExams} icon="🗓️" accent="red" subtitle="Examinations still in draft" trend={draftExams > 0 ? { label: 'Action needed', positive: false } : undefined} />
+      <StatCard title="Pending Result Approvals" value={stats.pendingMarks} icon="⏳" accent="red" subtitle="Submitted marks awaiting approval" trend={stats.pendingMarks > 0 ? { label: 'Action needed', positive: false } : undefined} />
+    </div>
+  );
+}
+
+// --- Department Head view: their own department only.
+// Counts come from the department-filtered list endpoints (limit=1, read
+// the paginated total), never from the system-wide dashboard stats.
+// Until the backend admits department_head on those list routes the
+// calls fail and this section says so instead of showing other
+// departments' numbers. No department linked to the account yet →
+// empty state, not system-wide data.
+function DeptHeadCards() {
+  const { user } = useAuth();
+  const deptId = user?.departmentId != null ? Number(user.departmentId) : null;
+  const [counts, setCounts] = useState<{ students: number; lecturers: number; subjects: number; departmentName: string | null } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (deptId == null) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const [s, l, sub] = await Promise.all([
+          studentsApi.list({ department_id: deptId, limit: 1 }),
+          lecturersApi.list({ department_id: deptId, limit: 1 }),
+          subjectsApi.list({ department_id: deptId, limit: 1 }),
+        ]);
+        if (cancelled) return;
+        const total = (body: { pagination?: { total?: number }; data: unknown[] }) =>
+          body.pagination?.total ?? (Array.isArray(body.data) ? body.data.length : 0);
+        const firstStudent = (s.data.data as Array<{ department_name?: string }>)[0];
+        setCounts({
+          students: total(s.data),
+          lecturers: total(l.data),
+          subjects: total(sub.data),
+          departmentName: firstStudent?.department_name ?? null,
+        });
+      } catch (err) {
+        if (!cancelled) setError(apiErrorMessage(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [deptId]);
+
+  if (deptId == null) {
+    return (
+      <div className="rounded-xl bg-amber-50 p-5 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+        <h2 className="font-semibold">No department linked to your account yet</h2>
+        <p className="mt-1">Ask the Super Admin to link your account to your department (through the lecturers record). Until then this dashboard stays empty — it will never show another department&apos;s students or results.</p>
+      </div>
+    );
+  }
+  if (loading) return <p className="p-4">Loading department overview…</p>;
+  if (error || !counts) {
+    return (
+      <div role="alert" className="rounded-xl bg-red-50 p-5 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">
+        <h2 className="font-semibold">Department data is not available yet</h2>
+        <p className="mt-1">The backend still needs to allow the Department Head role on the department-filtered student, lecturer and subject lists. {error}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <StatCard title="Department Students" value={counts.students} icon="🎓" accent="blue" subtitle={counts.departmentName ?? 'Your department'} />
+        <StatCard title="Department Lecturers" value={counts.lecturers} icon="👩‍🏫" accent="violet" subtitle={counts.departmentName ?? 'Your department'} />
+        <StatCard title="Department Subjects" value={counts.subjects} icon="📚" accent="amber" subtitle="Current semester" />
+      </div>
+      <p className="text-xs text-slate-500">
+        Department examination results are not counted here yet — there is no department-scoped results endpoint. Use the Results page (once its backend guard admits Department Head) to review your department&apos;s published results.
+      </p>
+    </div>
+  );
+}
+
+// --- Examination Invigilator view: assigned sessions only.
+// Assignment data lives in room_allocations (invigilator_id → lecturers),
+// and there is no invigilator-assignment endpoint yet, so this dashboard
+// shows no system numbers at all — only the link to the sessions page,
+// which lists the sessions and their halls. Incident reports have no
+// submission endpoint yet either (see the sessions page).
+function InvigilatorCards() {
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800" aria-label="Assigned examination sessions">
+        <h2 className="font-semibold">Your assigned sessions</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Open your sessions to see the examination, hall and student list for each one, and to record attendance.
+        </p>
+        <Link to="/my-invigilation" className="mt-3 inline-block rounded-lg bg-navy-900 px-4 py-2 text-sm font-medium text-white hover:bg-navy-800">
+          View my invigilation sessions →
+        </Link>
+      </section>
+      <p className="text-xs text-slate-500">
+        Sessions are assigned by the Examination Officer through room allocations. If no session lists you as invigilator, ask the officer to assign you — the sessions page shows each session&apos;s assigned invigilator.
+      </p>
+    </div>
+  );
+}
+
+// --- Staff / lecturer / finance / controller view: the original 8 cards.
+// Lecturer labels stay scoped to their own subjects (see the backend
+// scoping). Controller labels are system-wide by design — the controller
+// monitors all examinations.
+function StaffCards({ stats, isLecturer, isController = false }: { stats: DashboardStats; isLecturer: boolean; isController?: boolean }) {
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard title={isLecturer ? 'My Students' : 'Total Students'} value={stats.totalStudents} icon="🎓" accent="blue" subtitle={isLecturer ? 'Enrolled in your subjects' : 'Active enrolments'} />
@@ -121,7 +267,7 @@ function StaffCards({ stats, isLecturer }: { stats: DashboardStats; isLecturer: 
       <StatCard title="Upcoming Exams" value={stats.upcomingExams} icon="🗓️" accent="blue" subtitle={isLecturer ? 'In your subjects' : 'Scheduled, not yet held'} />
       <StatCard title="Completed Exams" value={stats.completedExams} icon="✅" accent="green" subtitle={isLecturer ? 'In your subjects' : 'This academic year'} />
       <StatCard title="Published Results" value={stats.publishedResults} icon="📊" accent="violet" subtitle={isLecturer ? 'In your subjects' : 'Visible to students'} />
-      <StatCard title="Pending Marks" value={stats.pendingMarks} icon="⏳" accent="red" subtitle={isLecturer ? 'Your marks awaiting submission' : 'Awaiting lecturer submission'} trend={{ label: 'Action needed', positive: false }} />
+      <StatCard title={isController ? 'Pending Result Approvals' : 'Pending Marks'} value={stats.pendingMarks} icon="⏳" accent="red" subtitle={isController ? 'Submitted marks awaiting approval' : isLecturer ? 'Your marks awaiting submission' : 'Awaiting lecturer submission'} trend={{ label: 'Action needed', positive: false }} />
     </div>
   );
 }

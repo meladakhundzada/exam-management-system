@@ -24,6 +24,11 @@ export default function Exams() {
   const { hasRole } = useAuth();
   const canManage = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
   const canDelete = hasRole('SUPER_ADMIN');
+  // Edit opens the form with the Status field — that is the schedule
+  // approval action, so the Examination Controller gets it too (the
+  // backend PUT /:id guard admits the controller). Create stays
+  // unchanged: the controller cannot create exams.
+  const canApproveExam = hasRole('SUPER_ADMIN', 'EXAM_OFFICER', 'EXAM_CONTROLLER');
   // Lecturers can create examinations for their own subjects (the form
   // offers the quiz type among others). Edit stays staff-only.
   // NOTE: the backend still restricts POST /api/exams to super_admin /
@@ -214,7 +219,7 @@ export default function Exams() {
         actions={(row) => (
           <span className="flex gap-3">
             <a href={`/marks/${row.id}`} className="text-navy-600 hover:underline">Marks →</a>
-            {canManage && <button onClick={() => openEdit(row)} className="text-navy-600 hover:underline">Edit</button>}
+            {canApproveExam && <button onClick={() => openEdit(row)} className="text-navy-600 hover:underline">Edit</button>}
             {canDelete && <button onClick={() => setDeleteTarget(row)} className="text-red-600 hover:underline">Delete</button>}
           </span>
         )}

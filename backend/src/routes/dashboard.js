@@ -12,17 +12,46 @@ const { studentGpa } = require('../utils/gpa');
 const router = express.Router();
 router.use(authenticate);
 
-// Resolve the caller's lecturer / student row id (null for staff).
+const { getDepartmentIdForUser, getInvigilatorScheduleIds } = require('../utils/scopes');
+
+// Resolve the caller's lecturer / student row id (null for staff),
+// plus — for the master-prompt roles — the department head's linked
+// department and the invigilator's assigned schedule ids. A missing
+// link means an empty scope (null / []), never system-wide data.
 async function scopedIds(req) {
   if (req.user.role === 'lecturer') {
     const t = await query('SELECT id FROM lecturers WHERE user_id = $1', [req.user.id]);
-    return { lecturerId: t.rows[0]?.id ?? -1, studentId: null };
+    return { lecturerId: t.rows[0]?.id ?? -1, studentId: null, departmentId: null, invigilatorScheduleIds: null };
   }
   if (req.user.role === 'student') {
     const s = await query('SELECT id FROM students WHERE user_id = $1', [req.user.id]);
-    return { lecturerId: null, studentId: s.rows[0]?.id ?? -1 };
+    return { lecturerId: null, studentId: s.rows[0]?.id ?? -1, departmentId: null, invigilatorScheduleIds: null };
   }
-  return { lecturerId: null, studentId: null };
+  if (req.user.role === 'department_head') {
+    return {
+      lecturerId: null, studentId: null,
+      departmentId: await getDepartmentIdForUser(req.user.id),
+      invigilatorScheduleIds: null,
+    };
+  }
+  if (req.user.role === 'invigilator') {
+    return {
+      lecturerId: null, studentId: null, departmentId: null,
+      invigilatorScheduleIds: await getInvigilatorScheduleIds(req.user.id),
+    };
+  }
+  return { lecturerId: null, studentId: null, departmentId: null, invigilatorScheduleIds: null };
+}
+
+// All-zero stats shape: what a department head with no linked
+// department, or an invigilator with no assigned sessions, gets —
+// never system-wide totals.
+function zeroStats() {
+  return {
+    totalStudents: 0, totalLecturers: 0, totalDepartments: 0, totalSubjects: 0,
+    upcomingExams: 0, completedExams: 0, publishedResults: 0, pendingMarks: 0,
+    examsByStatus: [], resultsByDepartment: [], monthlyExams: [],
+  };
 }
 
 // GET /api/dashboard/stats — counts + chart data, role-scoped.
@@ -37,6 +66,19 @@ router.get('/stats', async (req, res, next) => {
     const ids = await scopedIds(req);
     const isLecturer = ids.lecturerId !== null;
     const isStudent = ids.studentId !== null;
+    const isDeptHead = req.user.role === 'department_head';
+    const isInvigilator = req.user.role === 'invigilator';
+
+    // Department head with no linked department, or invigilator with
+    // no assigned sessions: empty stats, never system-wide totals.
+    // (The frontend does not request stats for these roles at all, but
+    // the API must not serve system totals to them either.)
+    if (isDeptHead && ids.departmentId == null) {
+      return res.json({ success: true, data: zeroStats() });
+    }
+    if (isInvigilator && !ids.invigilatorScheduleIds?.length) {
+      return res.json({ success: true, data: zeroStats() });
+    }
 
     if (isStudent) {
       const personal = await query(
@@ -66,30 +108,62 @@ router.get('/stats', async (req, res, next) => {
       return res.json({ success: true, data: { ...personal.rows[0], myCgpa } });
     }
 
-    // Subject set the caller may see: lecturer's own subjects, or all
-    // subjects for staff. (Students return early above, so no student
-    // branch is needed here.)
+    // Subject set the caller may see: lecturer's own subjects, the
+    // department head's department subjects, the invigilator's assigned
+    // sessions' subjects, or all subjects for staff. (Students return
+    // early above, so no student branch is needed here.) Department and
+    // schedule ids come from the DB (never user input), as in the
+    // lecturer branch — interpolating them is the existing pattern here.
+    const deptId = isDeptHead ? Number(ids.departmentId) : null;
+    const invScheduleList = isInvigilator
+      ? ids.invigilatorScheduleIds.map((n) => Number(n)).join(',')
+      : null;
     const subjectFilter = isLecturer
       ? `lecturer_id = ${ids.lecturerId}`
-      : 'TRUE';
+      : isDeptHead
+        ? `department_id = ${deptId}`
+        : isInvigilator
+          ? `id IN (SELECT subject_id FROM exam_schedules WHERE id IN (${invScheduleList}))`
+          : 'TRUE';
     // Exams visible: those with a schedule in a visible subject (all for staff).
     const examFilterFor = (alias) => (isLecturer
-      ? `${alias}id IN (SELECT exam_id FROM exam_schedules WHERE subject_id IN (SELECT id FROM subjects WHERE ${subjectFilter}))`
-      : 'TRUE');
+      ? `${alias}id IN (SELECT exam_id FROM exam_schedules WHERE subject_id IN (SELECT id FROM subjects WHERE lecturer_id = ${ids.lecturerId}))`
+      : isDeptHead
+        ? `${alias}id IN (SELECT exam_id FROM exam_schedules WHERE subject_id IN (SELECT id FROM subjects WHERE department_id = ${deptId}))`
+        : isInvigilator
+          ? `${alias}id IN (SELECT exam_id FROM exam_schedules WHERE id IN (${invScheduleList}))`
+          : 'TRUE');
     const examFilter = examFilterFor('');
-    const marksFilter = isLecturer ? `lecturer_id = ${ids.lecturerId}` : 'TRUE';
+    // Invigilators do not review marks or results: those counts stay 0.
+    const marksFilter = isLecturer ? `lecturer_id = ${ids.lecturerId}`
+      : isDeptHead ? `subject_id IN (SELECT id FROM subjects WHERE department_id = ${deptId})`
+      : isInvigilator ? 'FALSE' : 'TRUE';
     const resultsFilter = isLecturer
       ? `subject_id IN (SELECT id FROM subjects WHERE lecturer_id = ${ids.lecturerId})`
-      : 'TRUE';
+      : isDeptHead
+        ? `subject_id IN (SELECT id FROM subjects WHERE department_id = ${deptId})`
+        : isInvigilator ? 'FALSE' : 'TRUE';
     const totalStudentsSql = isLecturer
       ? `SELECT count(DISTINCT student_id)::int FROM enrollments WHERE subject_id IN (SELECT id FROM subjects WHERE lecturer_id = ${ids.lecturerId}) AND status = 'enrolled'`
-      : `SELECT count(*)::int FROM students WHERE status = 'active'`;
+      : isDeptHead
+        ? `SELECT count(*)::int FROM students WHERE status = 'active' AND department_id = ${deptId}`
+        : isInvigilator
+          ? `SELECT count(DISTINCT student_id)::int FROM enrollments WHERE subject_id IN (SELECT subject_id FROM exam_schedules WHERE id IN (${invScheduleList})) AND status = 'enrolled'`
+          : `SELECT count(*)::int FROM students WHERE status = 'active'`;
     const totalLecturersSql = isLecturer
       ? 'SELECT 1'
-      : `SELECT count(*)::int FROM lecturers WHERE is_active`;
+      : isDeptHead
+        ? `SELECT count(*)::int FROM lecturers WHERE is_active AND department_id = ${deptId}`
+        : isInvigilator
+          ? 'SELECT 1'
+          : `SELECT count(*)::int FROM lecturers WHERE is_active`;
     const totalDepartmentsSql = isLecturer
       ? `SELECT count(DISTINCT department_id)::int FROM subjects WHERE lecturer_id = ${ids.lecturerId}`
-      : 'SELECT count(*)::int FROM departments';
+      : isDeptHead
+        ? 'SELECT 1'
+        : isInvigilator
+          ? `SELECT count(DISTINCT department_id)::int FROM subjects WHERE id IN (SELECT subject_id FROM exam_schedules WHERE id IN (${invScheduleList}))`
+          : 'SELECT count(*)::int FROM departments';
 
     const counts = await query(
       `SELECT (${totalStudentsSql}) AS "totalStudents",

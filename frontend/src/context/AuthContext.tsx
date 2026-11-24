@@ -9,7 +9,7 @@ import {
 } from 'react';
 import { authApi, AuthUser, tokenStore, apiErrorMessage } from '../services/api';
 
-export type Role = AuthUser['role'] | 'FINANCE';
+export type Role = AuthUser['role'] | 'FINANCE' | 'EXAM_CONTROLLER' | 'DEPARTMENT_HEAD' | 'INVIGILATOR';
 
 export const ROLE_LABELS: Record<Role, string> = {
   SUPER_ADMIN: 'Super Admin',
@@ -17,19 +17,33 @@ export const ROLE_LABELS: Record<Role, string> = {
   FINANCE: 'Finance Officer',
   LECTURER: 'Lecturer',
   STUDENT: 'Student',
+  EXAM_CONTROLLER: 'Examination Controller',
+  DEPARTMENT_HEAD: 'Department Head',
+  INVIGILATOR: 'Examination Invigilator',
 };
 
 // Route-level permission matrix. Keep in sync with backend RBAC middleware.
+// New roles (master prompt):
+// - Examination Controller: exam operations, schedule + final-result
+//   approval, reports, monitoring — no user/finance management.
+// - Department Head: their own department's students, lecturers, subjects,
+//   exams and results — read-only academic oversight, no marks entry.
+// - Examination Invigilator: only their assigned sessions (see
+//   MyInvigilation page), the timetable and attendance marking.
 export const ROLE_ROUTES: Record<Role, string[]> = {
   SUPER_ADMIN: ['*'],
   EXAM_OFFICER: [
     '/dashboard', '/profile', '/students', '/lecturers', '/departments', '/subjects',
-    '/exams', '/timetable', '/attendance', '/marks', '/results', '/fees',
+    '/exams', '/exam-management', '/timetable', '/attendance', '/marks', '/results', '/fees',
     '/scholarships', '/fines', '/complaints', '/reports', '/notifications',
+    '/online-transactions',
   ],
-  FINANCE: ['/dashboard', '/profile', '/fees', '/scholarships', '/fines', '/reports'],
+  FINANCE: ['/dashboard', '/profile', '/fees', '/scholarships', '/fines', '/reports', '/online-transactions'],
   LECTURER: ['/dashboard', '/profile', '/students', '/subjects', '/exams', '/timetable', '/attendance', '/marks', '/results', '/reports', '/complaints', '/notifications', '/settings'],
-  STUDENT: ['/dashboard', '/profile', '/my-courses', '/my-attendance', '/timetable', '/results', '/fees', '/admit-card', '/complaints', '/settings'],
+  STUDENT: ['/dashboard', '/profile', '/my-courses', '/my-attendance', '/timetable', '/results', '/fees', '/admit-card', '/complaints', '/settings', '/pay-online'],
+  EXAM_CONTROLLER: ['/dashboard', '/profile', '/exams', '/exam-management', '/timetable', '/attendance', '/marks', '/results', '/reports'],
+  DEPARTMENT_HEAD: ['/dashboard', '/profile', '/students', '/lecturers', '/subjects', '/exams', '/timetable', '/results', '/reports'],
+  INVIGILATOR: ['/dashboard', '/profile', '/my-invigilation', '/timetable', '/attendance'],
 };
 
 interface AuthContextValue {
@@ -59,6 +73,9 @@ const ROLE_MAP: Record<string, Role> = {
   finance: 'FINANCE',
   lecturer: 'LECTURER',
   student: 'STUDENT',
+  exam_controller: 'EXAM_CONTROLLER',
+  department_head: 'DEPARTMENT_HEAD',
+  invigilator: 'INVIGILATOR',
 };
 
 function normalizeAuthUser(raw: unknown): AuthUser {
@@ -68,7 +85,11 @@ function normalizeAuthUser(raw: unknown): AuthUser {
     id: String(u.id ?? ''),
     email: String(u.email ?? ''),
     fullName: String(u.fullName ?? u.full_name ?? ''),
-    role: (ROLE_MAP[role] ?? role) as Role,
+    // NOTE: services/api.ts AuthUser['role'] now lists the three new
+    // roles (EXAM_CONTROLLER / DEPARTMENT_HEAD / INVIGILATOR), so the
+    // cast below is just the backend snake_case → frontend UPPER_SNAKE
+    // mapping through ROLE_MAP above.
+    role: (ROLE_MAP[role] ?? role) as AuthUser['role'],
     photoUrl: (u.photoUrl ?? u.avatar_url ?? null) as string | null,
     // /auth/me returns Postgres ints for the linked ids; convert them to
     // strings for real — a bare `as string` cast leaves a number at

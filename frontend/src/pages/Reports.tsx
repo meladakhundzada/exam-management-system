@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
+import api, {
   reportsApi, examsApi, departmentsApi, feesApi, ReportDashboard,
   apiErrorMessage, downloadBlob,
 } from '../services/api';
@@ -19,9 +19,12 @@ export default function Reports() {
   const isLecturer = hasRole('LECTURER');
   // Finance can open this page too, but the student-list, schedule and
   // published-results exports are STAFF/lecturer-only on the backend and
-  // would 403 — so they are hidden here for Finance, and Finance gets a
-  // financial report (payment history CSV) instead. Admit-card and
-  // result-sheet downloads are open to every authenticated role.
+  // would 403 — so they are hidden here for Finance, and Finance gets
+  // financial exports instead: the payment-history CSV plus the financial
+  // report (fee totals, breakdown by fee type, recent payments) as PDF or
+  // Excel via GET /api/reports/financial/export, which Finance is allowed
+  // to use. Admit-card and result-sheet downloads are open to every
+  // authenticated role.
   const isFinance = hasRole('FINANCE');
   const [stats, setStats] = useState<ReportDashboard | null>(null);
   const [exams, setExams] = useState<Array<{ id: number; title: string }>>([]);
@@ -149,6 +152,11 @@ export default function Reports() {
           <h3 className="font-bold">Financial report</h3>
           <p className="text-sm text-slate-500">Full payment history (receipt, date, student, fee type, method, amount) as a CSV file, for the whole university.</p>
           <button disabled={busy !== null} onClick={() => runExport('fees-csv', () => feesApi.exportPayments({}), 'payment-history.csv')} className="rounded-lg bg-navy-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Download payment history (CSV)</button>
+          <p className="text-sm text-slate-500">Financial report — fee totals, breakdown by fee type and recent payments.</p>
+          <div className="flex gap-2">
+            <button disabled={busy !== null} onClick={() => runExport('financial-xlsx', () => api.get('/reports/financial/export?format=xlsx', { responseType: 'blob' }), 'financial-report.xlsx')} className="rounded-lg bg-navy-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Excel</button>
+            <button disabled={busy !== null} onClick={() => runExport('financial-pdf', () => api.get('/reports/financial/export?format=pdf', { responseType: 'blob' }), 'financial-report.pdf')} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">PDF</button>
+          </div>
         </div>
         )}
 

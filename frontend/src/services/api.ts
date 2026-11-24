@@ -136,7 +136,7 @@ export interface AuthUser {
   id: string;
   email: string;
   fullName: string;
-  role: 'SUPER_ADMIN' | 'EXAM_OFFICER' | 'LECTURER' | 'STUDENT' | 'FINANCE';
+  role: 'SUPER_ADMIN' | 'EXAM_OFFICER' | 'LECTURER' | 'STUDENT' | 'FINANCE' | 'EXAM_CONTROLLER' | 'DEPARTMENT_HEAD' | 'INVIGILATOR';
   // Profile photo: downscaled JPEG data URL from users.avatar_url, or
   // null when the user has no photo. Returned by login and /auth/me.
   photoUrl?: string | null;
@@ -540,7 +540,7 @@ export const feesApi = {
 };
 
 // --- Users (Super Admin only) ---
-export type UserRole = 'super_admin' | 'exam_officer' | 'lecturer' | 'student' | 'finance';
+export type UserRole = 'super_admin' | 'exam_officer' | 'lecturer' | 'student' | 'finance' | 'exam_controller' | 'department_head' | 'invigilator';
 
 export interface AppUser {
   id: number;

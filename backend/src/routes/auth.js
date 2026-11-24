@@ -1,14 +1,66 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { body } = require('express-validator');
 const { query, withTransaction } = require('../config/db');
 const { signToken, authenticate } = require('../middleware/auth');
+const { authLimiter, loginLockout } = require('../middleware/rateLimit');
 const { validate } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId } = require('../utils/roles');
 
 const router = express.Router();
+
+// ---- Refresh tokens --------------------------------------------------------
+// A refresh token is a random 48-byte value. Only its SHA-256 hash is
+// stored (table refresh_tokens, migration 011) — a database leak never
+// exposes a usable token. Lifetime: 7 days. Every refresh ROTATES the
+// token: the old row is revoked and a new token is issued, so a stolen
+// token is useful at most once (reuse of a revoked token is rejected and
+// revokes the whole chain for that user — see /refresh below).
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function hashRefreshToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+// Issue + store a refresh token for a user. Returns the raw token, or
+// null when the refresh_tokens table does not exist yet (migration 011
+// not run): login must keep working in that case, so the caller falls
+// back to access-token-only auth and the missing migration is logged.
+async function issueRefreshToken(userId, req) {
+  const raw = crypto.randomBytes(48).toString('hex');
+  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
+  try {
+    await query(
+      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip_address)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, hashRefreshToken(raw), expiresAt.toISOString(),
+       req?.headers?.['user-agent']?.slice(0, 255) || null, req?.ip || null],
+    );
+  } catch (err) {
+    if (err.code === '42P01') {
+      console.warn('[auth] refresh_tokens table missing — run migration 011_refresh_tokens.sql; continuing without a refresh token');
+      return null;
+    }
+    throw err;
+  }
+  return raw;
+}
+
+// Revoke every live refresh token for a user (used on password change and
+// on logout-all). Missing table (42P01) is not an error — nothing to revoke.
+async function revokeAllRefreshTokens(userId) {
+  try {
+    await query(
+      'UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL',
+      [userId],
+    );
+  } catch (err) {
+    if (err.code === '42P01') return;
+    throw err;
+  }
+}
 
 // Linked profile ids for a user: the students/lecturers row (if any) plus
 // its department. The frontend AuthContext reads student_id / lecturer_id /
@@ -67,16 +119,23 @@ function validatePhotoDataUrl(value) {
   return null;
 }
 
-// POST /api/auth/login — any role. Returns { token, user }.
-// Rate-limit this route in production (e.g. express-rate-limit).
+// POST /api/auth/login — any role. Returns { token, refresh_token, user }.
+// Rate-limited per IP (authLimiter) and locked out per account after 5
+// consecutive failures (loginLockout): a locked-out account gets 423 even
+// with the right password, for 15 minutes.
 router.post(
   '/login',
+  authLimiter,
   [body('email').isEmail().withMessage('Valid email required'),
    body('password').notEmpty().withMessage('Password required')],
   validate,
   async (req, res, next) => {
     try {
       const { email, password } = req.body;
+      if (loginLockout.isLockedOut(email)) {
+        const waitMin = Math.ceil(loginLockout.lockoutRemainingMs(email) / 60000);
+        return res.status(423).json({ success: false, error: `Account temporarily locked after too many failed sign-in attempts — try again in about ${waitMin} minute(s)` });
+      }
       const { rows } = await query(
         `SELECT u.id, u.full_name, u.email, u.password_hash, u.is_active, u.avatar_url, r.name AS role
            FROM users u JOIN roles r ON r.id = u.role_id WHERE u.email = $1`,
@@ -84,16 +143,20 @@ router.post(
       );
       const user = rows[0];
       if (!user || !user.is_active) {
+        loginLockout.recordFailedLogin(email);
         return res.status(401).json({ success: false, error: 'Invalid email or password' });
       }
       if (!(await bcrypt.compare(password, user.password_hash))) {
+        loginLockout.recordFailedLogin(email);
         return res.status(401).json({ success: false, error: 'Invalid email or password' });
       }
+      loginLockout.resetLoginAttempts(email);
       await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
       await logAudit({ userId: user.id, action: 'auth.login', entityType: 'users', entityId: user.id, req });
       const token = signToken(user);
+      const refreshToken = await issueRefreshToken(user.id, req);
       const links = await linkedProfiles(user.id);
-      return res.json({ success: true, token, user: publicUser(user, links) });
+      return res.json({ success: true, token, refresh_token: refreshToken, user: publicUser(user, links) });
     } catch (err) { return next(err); }
   },
 );
@@ -103,6 +166,7 @@ router.post(
 // instead of the seeded demo admin, then delete/rotate the demo account.
 router.post(
   '/setup-first-admin',
+  authLimiter,
   [body('full_name').trim().notEmpty(), body('email').isEmail(),
    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')],
   validate,
@@ -150,6 +214,9 @@ router.post(
       }
       const hash = await bcrypt.hash(req.body.new_password, 10);
       await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+      // A password change invalidates every existing session: all refresh
+      // tokens are revoked, so a stolen token cannot survive the change.
+      await revokeAllRefreshTokens(req.user.id);
       await logAudit({ userId: req.user.id, action: 'auth.change_password', entityType: 'users', entityId: req.user.id, req });
       return res.json({ success: true, message: 'Password changed' });
     } catch (err) { return next(err); }
@@ -206,56 +273,99 @@ router.get('/me', authenticate, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
-// POST /api/auth/refresh — mint a fresh access token from the current one.
+// POST /api/auth/refresh — rotate a refresh token into a fresh pair.
 //
-// Why this exists (and why it is implemented this way): the frontend
-// interceptor calls POST /auth/refresh on every 401 and expects
-// { data: { accessToken } } back, but the backend never issued refresh
-// tokens — login returns a single stateless 8h JWT and there is no
-// refresh-token table (adding one would need a migration). So instead of
-// inventing a second token scheme, refresh re-issues an access token from
-// the presented JWT: the token is verified (signature + still belonging to
-// an active user) with expiration ignored, but only if it expired less
-// than 24h ago — a token older than that must sign in again. The client
-// sends the current access token in the Authorization header (the
-// interceptor does this) or as body.token / body.refreshToken. A logout
-// is client-side only (tokenStore.clear), so /logout below is a no-op
-// success that never fails on an expired token.
-router.post('/refresh', async (req, res, next) => {
+// Body: { refreshToken } (the frontend interceptor sends the stored
+// refresh token; { refresh_token } is accepted too). The presented token
+// must exist in refresh_tokens, be unrevoked and unexpired, and belong
+// to an active user. Rotation is atomic: the old row is revoked and the
+// new token is inserted in one transaction, and the new row records which
+// token it replaced. Reusing an already-revoked token is treated as
+// possible theft: every live refresh token for that user is revoked and
+// the client must sign in again.
+// The old behaviour — re-issuing an access token from an expired access
+// token — is gone: it could not be revoked, so logout was client-side only.
+router.post('/refresh', authLimiter, async (req, res, next) => {
   try {
-    const header = req.headers.authorization || '';
-    const presented = header.startsWith('Bearer ') ? header.slice(7)
-      : (req.body?.token || req.body?.refreshToken || null);
-    if (!presented) return res.status(401).json({ success: false, error: 'No token provided' });
-    let decoded;
-    try {
-      decoded = jwt.verify(presented, process.env.JWT_SECRET || 'dev-only-change-me-in-production', { ignoreExpiration: true });
-    } catch {
-      return res.status(401).json({ success: false, error: 'Invalid token' });
-    }
-    const expiredAgoMs = Date.now() - (decoded.exp * 1000);
-    if (expiredAgoMs > 24 * 60 * 60 * 1000) {
-      return res.status(401).json({ success: false, error: 'Token expired too long ago — please sign in again' });
-    }
+    const presented = req.body?.refreshToken || req.body?.refresh_token || null;
+    if (!presented) return res.status(401).json({ success: false, error: 'No refresh token provided' });
     const { rows } = await query(
-      `SELECT u.id, u.full_name, u.email, u.is_active, u.avatar_url, r.name AS role
-         FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`,
-      [decoded.id],
+      `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at, rt.replaced_by_id,
+              u.id AS uid, u.full_name, u.email, u.is_active, u.avatar_url, r.name AS role
+         FROM refresh_tokens rt
+         JOIN users u ON u.id = rt.user_id
+         JOIN roles r ON r.id = u.role_id
+        WHERE rt.token_hash = $1`,
+      [hashRefreshToken(presented)],
     );
-    const user = rows[0];
-    if (!user || !user.is_active) {
-      return res.status(401).json({ success: false, error: 'Invalid email or password' });
+    const rec = rows[0];
+    if (!rec) return res.status(401).json({ success: false, error: 'Invalid refresh token' });
+    if (rec.revoked_at) {
+      // Reuse of a revoked token: possible theft — revoke the whole chain
+      // so every token issued to this user stops working.
+      await revokeAllRefreshTokens(rec.user_id);
+      return res.status(401).json({ success: false, error: 'Refresh token was already used — please sign in again' });
     }
+    if (new Date(rec.expires_at) <= new Date()) {
+      return res.status(401).json({ success: false, error: 'Refresh token expired — please sign in again' });
+    }
+    if (!rec.is_active) {
+      return res.status(401).json({ success: false, error: 'Account is inactive' });
+    }
+    const user = { id: rec.uid, full_name: rec.full_name, email: rec.email, role: rec.role, avatar_url: rec.avatar_url };
+    const newRefreshToken = await withTransaction(async (client) => {
+      const raw = crypto.randomBytes(48).toString('hex');
+      const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
+      const { rows: ins } = await client.query(
+        `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip_address)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [rec.user_id, hashRefreshToken(raw), expiresAt.toISOString(),
+         req.headers?.['user-agent']?.slice(0, 255) || null, req.ip || null],
+      );
+      await client.query(
+        'UPDATE refresh_tokens SET revoked_at = now(), replaced_by_id = $1 WHERE id = $2',
+        [ins[0].id, rec.id],
+      );
+      return raw;
+    });
     const token = signToken(user);
     const links = await linkedProfiles(user.id);
-    return res.json({ success: true, data: { accessToken: token, refreshToken: null, user: publicUser(user, links) } });
+    return res.json({ success: true, data: { accessToken: token, refreshToken: newRefreshToken, user: publicUser(user, links) } });
   } catch (err) { return next(err); }
 });
 
-// POST /api/auth/logout — stateless JWTs cannot be revoked server-side
-// without a denylist table, so logout is the client clearing its token.
-// This endpoint exists so the frontend's authApi.logout() call succeeds
-// instead of 404ing; it takes no auth so it never fails on an expired token.
-router.post('/logout', (req, res) => res.json({ success: true, message: 'Logged out' }));
+// POST /api/auth/logout — revoke the presented refresh token server-side,
+// so it can never be used to mint a new access token again. The client
+// still clears its stored tokens. Takes no auth and never fails on an
+// expired access token; a missing/invalid refresh token is a no-op
+// success (there is nothing to revoke).
+router.post('/logout', async (req, res, next) => {
+  try {
+    const presented = req.body?.refreshToken || req.body?.refresh_token || null;
+    if (presented) {
+      await query(
+        'UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL',
+        [hashRefreshToken(presented)],
+      );
+    }
+    return res.json({ success: true, message: 'Logged out' });
+  } catch (err) {
+    if (err.code === '42P01') return res.json({ success: true, message: 'Logged out' });
+    return next(err);
+  }
+});
+
+// POST /api/auth/logout-all — revoke every refresh token for the signed-in
+// user (sign out on all devices). Access tokens already issued still live
+// until they expire (max 8h, JWT_EXPIRES_IN), but no new one can be minted.
+router.post('/logout-all', authenticate, async (req, res, next) => {
+  try {
+    await revokeAllRefreshTokens(req.user.id);
+    await logAudit({ userId: req.user.id, action: 'auth.logout_all', entityType: 'users', entityId: req.user.id, req });
+    return res.json({ success: true, message: 'Signed out on all devices' });
+  } catch (err) { return next(err); }
+});
 
 module.exports = router;
+module.exports.hashRefreshToken = hashRefreshToken;
+module.exports.REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_MS;

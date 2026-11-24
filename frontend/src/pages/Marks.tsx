@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import {
+import api, {
   examsApi, marksApi, subjectsApi, Exam, RosterRow, normalizeExam, normalizeRosterRow,
   apiErrorMessage,
 } from '../services/api';
@@ -24,7 +24,7 @@ const STATUS_LABEL: Record<RosterRow['status'], string> = {
 export default function Marks() {
   const { examId } = useParams<{ examId: string }>();
   const { hasRole, user } = useAuth();
-  const canApprove = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  const canApprove = hasRole('SUPER_ADMIN', 'EXAM_OFFICER', 'EXAM_CONTROLLER');
   // Lecturers may only enter marks for their own subjects — the backend
   // enforces this on POST /marks/bulk (lecturerOwnsSubject, 403 otherwise)
   // but GET /marks/roster is unscoped, so filter the subject picker here
@@ -44,6 +44,12 @@ export default function Marks() {
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [confirmReject, setConfirmReject] = useState(false);
+  // Correction requests for approved marks (locked — they can only change
+  // through the correction flow, POST /api/marks/:id/corrections).
+  const [correctionFor, setCorrectionFor] = useState<string | null>(null);
+  const [correctionValue, setCorrectionValue] = useState('');
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [pendingCorrections, setPendingCorrections] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     examsApi.list({ limit: 200 }).then(
@@ -91,6 +97,15 @@ export default function Marks() {
       const { data } = await marksApi.roster(eId, sId);
       setRows((data.data as unknown as Record<string, unknown>[]).map(normalizeRosterRow));
       setError(null);
+      // Which approved marks already have a correction awaiting review?
+      try {
+        const corr = await api.get<{ data: Array<Record<string, unknown>> }>('/marks/corrections?status=pending');
+        setPendingCorrections(new Set(
+          (corr.data.data ?? []).map((c) => String(c.mark_id)),
+        ));
+      } catch {
+        setPendingCorrections(new Set());
+      }
     } catch (err) {
       setError(apiErrorMessage(err));
     } finally {
@@ -128,18 +143,29 @@ export default function Marks() {
   };
 
   // Save the whole class as drafts: POST /api/marks/bulk.
+  // Locked rows (approved/submitted) are skipped by the API and reported
+  // in `skipped` — surface them instead of pretending they were saved.
   const saveDrafts = async () => {
     const v = validateAll();
     if (v) { setError(v); return; }
     setSaving(true);
     try {
-      await marksApi.bulk(
+      const { data } = await marksApi.bulk(
         selectedExamId,
         selectedSubjectId,
         rows.map((r) => ({ student_id: Number(r.studentPk), obtained_marks: r.marksObtained! })),
       );
-      setNotice('Marks saved as drafts.');
-      setError(null);
+      const skipped = (data as unknown as { skipped?: Array<{ student_id: number; error: string }> }).skipped ?? [];
+      if (skipped.length) {
+        const names = skipped.map((s) => {
+          const row = rows.find((r) => Number(r.studentPk) === Number(s.student_id));
+          return row ? `${row.studentName}: ${s.error}` : s.error;
+        });
+        setError(`${skipped.length} mark(s) were not saved:\n${names.join('\n')}`);
+      } else {
+        setNotice('Marks saved as drafts.');
+        setError(null);
+      }
       await loadRoster(selectedExamId, selectedSubjectId);
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -182,7 +208,8 @@ export default function Marks() {
   const approveMarks = async () => {
     setSaving(true);
     try {
-      const targets = rows.filter((r) => (r.status === 'submitted' || r.status === 'draft') && r.markId);
+      // Only submitted marks can be approved — drafts must be submitted first.
+      const targets = rows.filter((r) => r.status === 'submitted' && r.markId);
       if (!targets.length) { setError('No marks awaiting approval.'); return; }
       await Promise.all(targets.map((r) => marksApi.approve(r.markId!)));
       setNotice('Marks approved. Grades and GPA will be calculated on publication.');
@@ -198,13 +225,38 @@ export default function Marks() {
   const rejectMarks = async () => {
     setSaving(true);
     try {
-      const targets = rows.filter((r) => (r.status === 'submitted' || r.status === 'draft') && r.markId);
+      const targets = rows.filter((r) => r.status === 'submitted' && r.markId);
       if (!targets.length) { setError('No marks to reject.'); return; }
       await Promise.all(targets.map((r) => marksApi.reject(r.markId!, rejectReason || undefined)));
       setNotice('Marks rejected and sent back for correction.');
       setConfirmReject(false);
       setRejectReason('');
       await loadRoster(selectedExamId, selectedSubjectId);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Request a correction to an APPROVED mark: POST /api/marks/:id/corrections.
+  // The mark stays approved and unchanged until an officer approves it.
+  const requestCorrection = async () => {
+    if (!correctionFor) return;
+    const value = Number(correctionValue);
+    if (!Number.isFinite(value) || value < 0 || value > 100) { setError('Enter a valid corrected mark (0–100).'); return; }
+    if (!correctionReason.trim()) { setError('Give a reason for the correction.'); return; }
+    setSaving(true);
+    try {
+      await api.post(`/marks/${correctionFor}/corrections`, {
+        proposed_value: value, reason: correctionReason.trim(),
+      });
+      setNotice('Correction requested. An Examination Officer will review it before the mark changes.');
+      setError(null);
+      setPendingCorrections((prev) => new Set(prev).add(correctionFor));
+      setCorrectionFor(null);
+      setCorrectionValue('');
+      setCorrectionReason('');
     } catch (err) {
       setError(apiErrorMessage(err));
     } finally {
@@ -219,8 +271,8 @@ export default function Marks() {
       <div>
         <h1 className="text-2xl font-bold">Marks Entry</h1>
         <p className="text-sm text-slate-500">
-          Lecturers enter marks out of 100. Save drafts, then submit for approval; after approval only an
-          Examination Officer can reject them back for correction.
+          Lecturers enter marks out of 100. Save drafts, then submit for approval; approved marks are locked and
+          can only change through a correction request reviewed by an Examination Officer.
         </p>
       </div>
 
@@ -293,7 +345,7 @@ export default function Marks() {
             <div className="mt-4 overflow-x-auto">
               <table className="w-full min-w-[560px] text-left text-sm">
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-900">
-                  <tr><th className="px-3 py-2">Student</th><th className="px-3 py-2">Student No.</th><th className="px-3 py-2">Marks / 100</th><th className="px-3 py-2">Status</th></tr>
+                  <tr><th className="px-3 py-2">Student</th><th className="px-3 py-2">Student No.</th><th className="px-3 py-2">Marks / 100</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Correction</th></tr>
                 </thead>
                 <tbody>
                   {rows.map((r) => (
@@ -306,10 +358,26 @@ export default function Marks() {
                           value={r.marksObtained ?? ''}
                           onChange={(e) => setMark(r.studentPk, e.target.value)}
                           aria-label={`Marks for ${r.studentName}`}
-                          className="w-28 rounded-lg border px-2 py-1.5"
+                          disabled={r.status === 'approved' || r.status === 'submitted'}
+                          title={r.status === 'approved' ? 'Approved marks are locked — request a correction instead' : r.status === 'submitted' ? 'Submitted marks are locked until an officer rejects them back' : undefined}
+                          className="w-28 rounded-lg border px-2 py-1.5 disabled:opacity-50"
                         />
                       </td>
                       <td className="px-3 py-2 text-xs">{STATUS_LABEL[r.status]}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {r.status === 'approved' && r.markId && (
+                          pendingCorrections.has(r.markId)
+                            ? <span className="text-amber-600">Correction pending review</span>
+                            : (
+                              <button
+                                onClick={() => { setCorrectionFor(r.markId!); setCorrectionValue(String(r.marksObtained ?? '')); setCorrectionReason(''); }}
+                                className="rounded-lg border px-2 py-1 font-semibold text-navy-600 hover:underline"
+                              >
+                                Request correction
+                              </button>
+                            )
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -324,12 +392,44 @@ export default function Marks() {
           <div className="w-full max-w-md rounded-xl bg-white p-6 dark:bg-slate-800">
             <h2 className="text-lg font-bold">Approve these marks?</h2>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-              Approved marks are locked for lecturers and feed GPA / result calculation. Only an Examination Officer
-              can reject them afterwards.
+              Only submitted marks are approved. Approved marks are locked for lecturers and feed GPA / result
+              calculation; changing one afterwards needs a correction request.
             </p>
             <div className="mt-6 flex justify-end gap-2">
               <button onClick={() => setConfirmApprove(false)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
               <button onClick={approveMarks} disabled={saving} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">Approve</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {correctionFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="alertdialog" aria-modal="true" aria-label="Request mark correction">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 dark:bg-slate-800">
+            <h2 className="text-lg font-bold">Request a correction</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              This mark is approved and locked. The corrected value applies only after an Examination Officer
+              approves the request; the original value is kept in the mark history.
+            </p>
+            <label className="mt-4 block text-sm font-medium">Corrected marks (0–100)
+              <input
+                type="number" min={0} max={100} step={0.5}
+                value={correctionValue}
+                onChange={(e) => setCorrectionValue(e.target.value)}
+                className="mt-1 w-full rounded-lg border px-3 py-2"
+              />
+            </label>
+            <label className="mt-4 block text-sm font-medium">Reason (required)
+              <input
+                value={correctionReason}
+                onChange={(e) => setCorrectionReason(e.target.value)}
+                placeholder="e.g. re-checked the answer sheet: Q3 was marked wrong"
+                className="mt-1 w-full rounded-lg border px-3 py-2"
+              />
+            </label>
+            <div className="mt-6 flex justify-end gap-2">
+              <button onClick={() => setCorrectionFor(null)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+              <button onClick={requestCorrection} disabled={saving} className="rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white">Submit request</button>
             </div>
           </div>
         </div>

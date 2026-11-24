@@ -7,16 +7,17 @@
 // itself (status 'paid' + paid_at) — fee_payments.student_fee_id is
 // NOT NULL and references student_fees, so routing a fine payment
 // through it would require fabricating a student_fees row per fine.
-// No receipt number is issued for a fine payment.
+// Fine receipts (migration 009): a fine payment DOES get a receipt
+// number now — REC-YYYY-NNNN from the SAME fee_receipt_seq sequence as
+// fee payments, so a receipt number is never issued twice across fees
+// and fines. No separate fine receipt sequence.
 // Status flow: outstanding → paid, or outstanding → waived. A waived
 // fine is excluded from every outstanding total (all totals sum only
 // status = 'outstanding'). "Overdue" is computed from due_date, never
 // stored. No late-fee automation and no scheduled jobs exist anywhere
 // in this module: fines are only created manually by staff.
-// Students have NO access here — there is deliberately no student
-// fines endpoint. A student's own fines are not shown on the Fees
-// page either (that page reads student_fees only); exposing them to
-// students is a separate, own-only endpoint for the coordinator.
+// Students see ONLY their own fines, via GET /api/fines/mine below —
+// staff endpoints stay staff-only.
 const express = require('express');
 const { body, param } = require('express-validator');
 const { query } = require('../config/db');
@@ -130,6 +131,45 @@ router.get('/', requireRole(...STAFF), async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// GET /api/fines/mine — the signed-in student's OWN fines only
+// (any status; outstanding totals included). Staff must use GET /api/fines.
+// NOTE: this route must stay above GET /:id, or "mine" would be parsed
+// as an :id.
+router.get('/mine', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'student') return res.status(403).json({ success: false, error: 'Students only' });
+    const { rows: me } = await query('SELECT id FROM students WHERE user_id = $1', [req.user.id]);
+    const mine = me[0]?.id;
+    if (!mine) return res.status(404).json({ success: false, error: 'No student profile is linked to your account' });
+    const { page, limit, offset } = pagination(req);
+    const where = ['f.student_id = $1'];
+    const params = [mine];
+    if (req.query.status) {
+      if (req.query.status === 'overdue') {
+        where.push(`f.due_date < CURRENT_DATE AND f.status = 'outstanding'`);
+      } else if (['outstanding', 'paid', 'waived'].includes(req.query.status)) {
+        params.push(req.query.status);
+        where.push(`f.status = $${params.length}`);
+      } else {
+        return res.status(400).json({ success: false, error: 'Invalid status filter: use outstanding, paid, waived or overdue' });
+      }
+    }
+    const clause = `WHERE ${where.join(' AND ')}`;
+    const total = await query(
+      `SELECT count(*)::int AS n FROM fines f ${clause}`, params);
+    const { rows } = await query(
+      `${FINE_SELECT} ${clause} ORDER BY f.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset],
+    );
+    const totals = await query(
+      `SELECT COUNT(*) FILTER (WHERE status = 'outstanding')::int AS outstanding_count,
+              COALESCE(SUM(amount) FILTER (WHERE status = 'outstanding'), 0)::float AS outstanding_amount,
+              COUNT(*) FILTER (WHERE status = 'paid')::int AS paid_count
+         FROM fines WHERE student_id = $1`, [mine]);
+    return res.json({ ...paginatedResponse(rows.map(toFine), total.rows[0].n, { page, limit }), totals: totals.rows[0] });
+  } catch (err) { return next(err); }
+});
+
 // GET /api/fines/:id — one fine (staff only).
 router.get('/:id', requireRole(...STAFF), param('id').isInt({ min: 1 }), validate,
   async (req, res, next) => {
@@ -191,15 +231,21 @@ router.post('/:id/waive', requireRole(...STAFF), param('id').isInt({ min: 1 }), 
 
 // POST /api/fines/:id/pay — mark an outstanding fine paid in full
 // (staff only). Payment is recorded on the fines row itself
-// (status 'paid' + paid_at); no fee_payments row and no receipt are
-// created — see the header note. Only an outstanding fine can be paid.
-router.post('/:id/pay', requireRole(...STAFF), param('id').isInt({ min: 1 }), validate,
+// (status 'paid' + paid_at); no fee_payments row is created — see the
+// header note. A receipt IS issued now (migration 009): REC-YYYY-NNNN
+// from the shared fee_receipt_seq sequence, stored in fines.receipt_no,
+// together with the payment method (default 'cash'). Only an
+// outstanding fine can be paid.
+router.post('/:id/pay', requireRole(...STAFF), param('id').isInt({ min: 1 }),
+  [body('payment_method').optional().isIn(['cash', 'bank', 'mobile_money', 'other', 'online'])], validate,
   async (req, res, next) => {
     try {
       const { rows } = await query(
-        `UPDATE fines SET status = 'paid', paid_at = now()
+        `UPDATE fines SET status = 'paid', paid_at = now(),
+                receipt_no = (SELECT 'REC-' || to_char(CURRENT_DATE,'YYYY') || '-' || lpad(nextval('fee_receipt_seq')::text, 4, '0')),
+                payment_method = $2
           WHERE id = $1 AND status = 'outstanding' RETURNING *`,
-        [req.params.id]);
+        [req.params.id, req.body.payment_method || 'cash']);
       if (!rows[0]) {
         const existing = await query('SELECT id, status FROM fines WHERE id = $1', [req.params.id]);
         if (!existing.rows[0]) return res.status(404).json({ success: false, error: 'Fine not found' });

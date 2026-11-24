@@ -134,6 +134,38 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+psql "%DATABASE_URL%" -v ON_ERROR_STOP=1 -f "%~dp0database\migrations\008_exam_management.sql"
+if errorlevel 1 (
+  echo.
+  echo Exam management migration failed. Read the error above, then double-click
+  echo run.bat again.
+  pause
+  exit /b 1
+)
+psql "%DATABASE_URL%" -v ON_ERROR_STOP=1 -f "%~dp0database\migrations\009_online_payments.sql"
+if errorlevel 1 (
+  echo.
+  echo Online payments migration failed. Read the error above, then double-click
+  echo run.bat again.
+  pause
+  exit /b 1
+)
+psql "%DATABASE_URL%" -v ON_ERROR_STOP=1 -f "%~dp0database\migrations\010_marks_history.sql"
+if errorlevel 1 (
+  echo.
+  echo Marks history migration failed. Read the error above, then double-click
+  echo run.bat again.
+  pause
+  exit /b 1
+)
+psql "%DATABASE_URL%" -v ON_ERROR_STOP=1 -f "%~dp0database\migrations\011_refresh_tokens.sql"
+if errorlevel 1 (
+  echo.
+  echo Refresh tokens migration failed. Read the error above, then double-click
+  echo run.bat again.
+  pause
+  exit /b 1
+)
 
 if not exist "%~dp0backend\node_modules" (
   echo Installing backend packages (first time only, needs internet)...

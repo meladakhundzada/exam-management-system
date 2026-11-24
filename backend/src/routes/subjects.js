@@ -11,6 +11,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, pagination, paginatedResponse } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
 const { getLecturerScope } = require('../utils/lecturerScope');
+const { getDepartmentIdForUser } = require('../utils/scopes');
 
 const router = express.Router();
 router.use(authenticate);
@@ -26,7 +27,7 @@ const SELECT_JOINED = `
     LEFT JOIN lecturers t ON t.id = sub.lecturer_id`;
 
 // GET /api/subjects?page&limit&search&department_id&lecturer_id
-router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (req, res, next) => {
+router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer', 'department_head'), async (req, res, next) => {
   try {
     const { page, limit, offset } = pagination(req);
     const { search = '', department_id, lecturer_id } = req.query;
@@ -41,6 +42,14 @@ router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (r
       if (!scope) return res.json(paginatedResponse([], 0, { page, limit }));
       params.push(scope.lecturerId); where.push(`sub.lecturer_id = $${params.length}`);
     }
+    // Department heads see only subjects of their own department (the
+    // caller's department is forced, whatever ?department_id= says).
+    // No linked department → empty list.
+    if (req.user.role === 'department_head') {
+      const deptId = await getDepartmentIdForUser(req.user.id);
+      if (deptId == null) return res.json(paginatedResponse([], 0, { page, limit }));
+      params.push(deptId); where.push(`sub.department_id = $${params.length}`);
+    }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await query(`SELECT count(*)::int AS n FROM subjects sub ${clause}`, params);
     const { rows } = await query(
@@ -52,7 +61,7 @@ router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (r
 });
 
 // GET /api/subjects/:id
-router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer'),
+router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer', 'department_head'),
   param('id').isInt(), validate, async (req, res, next) => {
     try {
       const { rows } = await query(`${SELECT_JOINED} WHERE sub.id = $1`, [req.params.id]);
@@ -61,6 +70,14 @@ router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer'),
         const scope = await getLecturerScope(req.user.id);
         if (!scope || rows[0].lecturer_id !== scope.lecturerId) {
           return res.status(403).json({ success: false, error: 'Subject is not assigned to you' });
+        }
+      }
+      // A department head may view a subject only when it is in their
+      // department. No linked department → 403.
+      if (req.user.role === 'department_head') {
+        const deptId = await getDepartmentIdForUser(req.user.id);
+        if (deptId == null || rows[0].department_id !== deptId) {
+          return res.status(403).json({ success: false, error: 'Subject is not in your department' });
         }
       }
       return res.json({ success: true, data: rows[0] });

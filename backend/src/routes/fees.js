@@ -523,6 +523,45 @@ router.post('/payments/:id/refund', requireRole(...STAFF), param('id').isInt({ m
     } catch (err) { return next(err); }
   });
 
+// Best-effort sync of a refunded fee payment back to its online
+// payment_transactions row (migration 009): a fully refunded payment
+// becomes 'refunded', a partially refunded one 'partially_refunded'.
+// The link is the payment reference in the fee payment's note
+// ("Online payment via HesabPay — PAY-YYYY-NNNNNN", written by
+// applySuccessfulPayment in routes/payments.js); a cash/bank payment
+// has no such reference and touches no online transaction. This runs
+// AFTER the refund transaction commits, in its own try/catch, so it
+// can never break the refund flow — and it is a no-op when migration
+// 009 has not run yet (the table does not exist: 42P01) or when the
+// payment was never online.
+async function syncOnlineTransactionRefundStatus(feePaymentId) {
+  try {
+    const pay = await query('SELECT * FROM fee_payments WHERE id = $1', [feePaymentId]);
+    if (!pay.rows[0]) return;
+    const note = String(pay.rows[0].note || '');
+    const ref = (note.match(/PAY-\d{4}-\d+/) || [])[0];
+    if (!ref) return;
+    const txn = await query(
+      `SELECT * FROM payment_transactions WHERE payment_reference = $1
+        AND status IN ('successful', 'partially_refunded')`,
+      [ref]);
+    if (!txn.rows[0]) return;
+    const refunded = await query(
+      `SELECT COALESCE(SUM(amount),0)::float AS total FROM fee_refunds
+        WHERE fee_payment_id = $1 AND status = 'approved'`, [feePaymentId]);
+    const newStatus = Number(refunded.rows[0].total) >= Number(pay.rows[0].amount)
+      ? 'refunded' : 'partially_refunded';
+    await query(
+      `UPDATE payment_transactions SET status = $2 WHERE id = $1
+        AND status IN ('successful', 'partially_refunded')`,
+      [txn.rows[0].id, newStatus]);
+  } catch (err) {
+    // Never break the refund flow: missing table (009 not applied),
+    // missing row, anything — the refund itself already succeeded.
+    console.warn('[fees] online-transaction refund sync skipped:', err.message);
+  }
+}
+
 // POST /api/fees/refunds/:id/approve — approve a refund (Super Admin or
 // Exam Officer only). In ONE transaction: mark the refund approved with
 // authorized_by/authorized_at, post the negative reversal payment (new
@@ -574,6 +613,10 @@ router.post('/refunds/:id/approve', requireRole(...APPROVERS), param('id').isInt
       });
       if (result.status === 200) {
         await logAudit({ userId: req.user.id, action: 'fees.refund_approve', entityType: 'fee_refunds', entityId: refundId, newValues: result.body.data, req });
+        // Best-effort only: if the refunded payment was an online
+        // (HesabPay) payment, mark its payment_transactions row refunded
+        // / partially_refunded. Never throws — see the helper above.
+        await syncOnlineTransactionRefundStatus(result.body.data.refund.fee_payment_id);
       }
       return res.status(result.status).json(result.body);
     } catch (err) { return next(err); }

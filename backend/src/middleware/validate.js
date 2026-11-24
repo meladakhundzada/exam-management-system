@@ -34,14 +34,16 @@ function paginatedResponse(rows, total, { page, limit }) {
 function errorHandler(err, req, res, next) {
   console.error('[error]', err);
   // Postgres unique-violation → 409, FK violation → 400, everything else 500.
+  // NOTE: err.detail is deliberately NOT returned — it leaks raw Postgres
+  // detail (constraint names, key values) to the client.
   if (err.code === '23505') {
-    return res.status(409).json({ success: false, error: 'Duplicate record: a record with this unique value already exists', detail: err.detail });
+    return res.status(409).json({ success: false, error: 'Duplicate record: a record with this unique value already exists' });
   }
   if (err.code === '23503') {
-    return res.status(400).json({ success: false, error: 'Referenced record does not exist', detail: err.detail });
+    return res.status(400).json({ success: false, error: 'Referenced record does not exist' });
   }
   if (err.code === '23514') {
-    return res.status(400).json({ success: false, error: 'Value violates a database constraint', detail: err.detail });
+    return res.status(400).json({ success: false, error: 'Value violates a database constraint' });
   }
   return res.status(err.status || 500).json({ success: false, error: err.message || 'Internal server error' });
 }

@@ -201,7 +201,7 @@ export default function Fines() {
   };
 
   const payFine = async (fine: Fine) => {
-    if (!window.confirm(`Mark this fine of ${formatAfn(fine.amount)} for ${fine.student_name} as paid in full? No receipt is issued for a fine payment.`)) return;
+    if (!window.confirm(`Mark this fine of ${formatAfn(fine.amount)} for ${fine.student_name} as paid in full? A receipt will be issued for this fine payment.`)) return;
     setSaving(true);
     try {
       await finesApi.pay(fine.id);

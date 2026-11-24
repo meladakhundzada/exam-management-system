@@ -15,7 +15,7 @@ const GRADE_BADGE: Record<string, string> = {
 export default function Results() {
   const { user, hasRole } = useAuth();
   const isStudent = hasRole('STUDENT');
-  const isStaff = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  const isStaff = hasRole('SUPER_ADMIN', 'EXAM_OFFICER', 'EXAM_CONTROLLER');
   // Lecturers look results up per student (GET /api/results/student/:id
   // allows any authenticated role except a student viewing someone else),
   // but only their own subjects are shown: the backend list endpoint has
@@ -36,6 +36,13 @@ export default function Results() {
   const [exams, setExams] = useState<Exam[]>([]);
   const [selectedExamId, setSelectedExamId] = useState('');
   const [working, setWorking] = useState(false);
+  // Marks skipped by the last calculation (approved but no grade band
+  // covers their percentage) — the API reports them instead of dropping
+  // them silently, so staff can fix the grade scale or the mark.
+  const [skipped, setSkipped] = useState<Array<{
+    student_name: string; subject_code: string; obtained_marks: number;
+    total_marks: number; percentage: number | null; reason: string;
+  }>>([]);
 
   useEffect(() => {
     if (isStaff) {
@@ -130,6 +137,13 @@ export default function Results() {
     setWorking(true);
     try {
       const { data } = await resultsApi.calculate(selectedExamId);
+      const skippedRows = (data as unknown as {
+        skipped?: Array<{
+          student_name: string; subject_code: string; obtained_marks: number;
+          total_marks: number; percentage: number | null; reason: string;
+        }>;
+      }).skipped ?? [];
+      setSkipped(skippedRows);
       setNotice(data.message ?? `${(data.data as unknown[]).length} result(s) calculated from approved marks.`);
       setError(null);
     } catch (err) {
@@ -218,6 +232,21 @@ export default function Results() {
 
       {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {notice && <div role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>}
+
+      {skipped.length > 0 && (
+        <div role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="font-semibold">{skipped.length} approved mark(s) were skipped — no grade band covers them, so they have no result yet:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {skipped.map((s, i) => (
+              <li key={i}>
+                {s.student_name} · {s.subject_code} — {s.obtained_marks}/{s.total_marks}
+                {s.percentage !== null ? ` (${s.percentage}%)` : ''}: {s.reason}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1">Check the grade scale or correct the mark, then calculate again.</p>
+        </div>
+      )}
 
       {(visibleGpa !== null || cgpa !== null) && (
         <div className="grid grid-cols-2 gap-4 sm:max-w-md">

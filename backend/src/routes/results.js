@@ -9,26 +9,51 @@ const { validate, pagination, paginatedResponse } = require('../middleware/valid
 const { logAudit } = require('../utils/audit');
 const { getGradeScale, gradeForMarks, studentGpa, calculateGpa } = require('../utils/gpa');
 const { getLecturerScope, lecturerSubjectSql } = require('../utils/lecturerScope');
+const { getDepartmentIdForUser } = require('../utils/scopes');
 
 const router = express.Router();
 router.use(authenticate);
 const OFFICER = requireRole('super_admin', 'exam_officer');
+// Result approval (calculate / publish / unpublish) also admits the
+// Exam Controller. Kept separate from OFFICER on purpose: OFFICER also
+// guards the complaints review queue, which is not the controller's job.
+const RESULTS_APPROVER = requireRole('super_admin', 'exam_officer', 'exam_controller');
 
 // POST /api/results/calculate/:examId — build results from APPROVED marks.
 // Idempotent: re-running updates existing result rows for the exam.
-router.post('/calculate/:examId', OFFICER, param('examId').isInt(), validate,
+router.post('/calculate/:examId', RESULTS_APPROVER, param('examId').isInt(), validate,
   async (req, res, next) => {
     try {
       const examId = Number(req.params.examId);
-      const created = await withTransaction(async (client) => {
+      const { created, skipped } = await withTransaction(async (client) => {
         const scale = await getGradeScale(client);
         const { rows: marks } = await client.query(
-          `SELECT m.*, sub.credit_hours FROM marks m JOIN subjects sub ON sub.id = m.subject_id
+          `SELECT m.*, sub.credit_hours, s.full_name AS student_name, sub.code AS subject_code
+             FROM marks m JOIN subjects sub ON sub.id = m.subject_id
+             JOIN students s ON s.id = m.student_id
             WHERE m.exam_id = $1 AND m.status = 'approved'`, [examId]);
         const out = [];
+        const skipped = [];
         for (const m of marks) {
-          const grade = gradeForMarks(m.obtained_marks, scale);
-          if (!grade) continue; // no grade band covers this mark — skip, do not invent one
+          // Bands are percentages: grade on obtained/total, not raw marks.
+          const grade = gradeForMarks(m.obtained_marks, m.total_marks, scale);
+          if (!grade) {
+            // Never silently drop a mark: report it so staff can fix the
+            // grade scale or the mark instead of wondering why a student
+            // has no result.
+            const pct = Number(m.total_marks) > 0
+              ? Math.round((Number(m.obtained_marks) / Number(m.total_marks)) * 10000) / 100 : null;
+            skipped.push({
+              mark_id: m.id, student_id: m.student_id, student_name: m.student_name,
+              subject_id: m.subject_id, subject_code: m.subject_code,
+              obtained_marks: Number(m.obtained_marks), total_marks: Number(m.total_marks),
+              percentage: pct,
+              reason: pct === null
+                ? 'Invalid total_marks — cannot grade this mark'
+                : `No grade band covers ${pct}% — check the grade scale`,
+            });
+            continue;
+          }
           const { rows } = await client.query(
             `INSERT INTO results (exam_id, student_id, subject_id, mark_id, obtained_marks, grade, grade_point)
              VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -45,17 +70,37 @@ router.post('/calculate/:examId', OFFICER, param('examId').isInt(), validate,
           const gpa = await studentGpa(client, sid, examId);
           await client.query('UPDATE results SET gpa = $1 WHERE exam_id = $2 AND student_id = $3', [gpa, examId, sid]);
         }
-        return out;
+        return { created: out, skipped };
       });
-      await logAudit({ userId: req.user.id, action: 'results.calculate', entityType: 'examinations', entityId: examId, newValues: { count: created.length }, req });
-      return res.json({ success: true, data: created, message: `${created.length} result(s) calculated from approved marks` });
+      await logAudit({ userId: req.user.id, action: 'results.calculate', entityType: 'examinations', entityId: examId, newValues: { count: created.length, skipped: skipped.length }, req });
+      const message = skipped.length
+        ? `${created.length} result(s) calculated from approved marks; ${skipped.length} mark(s) skipped — no grade band covers them (see skipped list)`
+        : `${created.length} result(s) calculated from approved marks`;
+      return res.json({ success: true, data: created, skipped, message });
     } catch (err) { return next(err); }
   });
 
 // POST /api/results/publish/:examId — publish all results for the exam.
-router.post('/publish/:examId', OFFICER, param('examId').isInt(), validate,
+// Guard (was missing): publish only results whose underlying mark is still
+// approved. Results are created from approved marks, but a mark can leave
+// the approved state afterwards (e.g. a correction flow edge case), and
+// publishing such a result would show students a grade backed by no
+// approved mark. Blocked rows are listed in the 400 response.
+router.post('/publish/:examId', RESULTS_APPROVER, param('examId').isInt(), validate,
   async (req, res, next) => {
     try {
+      const blocked = await query(
+        `SELECT r.id, r.student_id, r.subject_id, m.status AS mark_status
+           FROM results r LEFT JOIN marks m ON m.id = r.mark_id
+          WHERE r.exam_id = $1 AND NOT r.is_published AND (m.id IS NULL OR m.status <> 'approved')`,
+        [req.params.examId]);
+      if (blocked.rows.length) {
+        return res.status(400).json({
+          success: false,
+          error: `Cannot publish: ${blocked.rows.length} result(s) have no approved mark behind them. Approve the marks (or re-calculate results) first.`,
+          blocked: blocked.rows,
+        });
+      }
       const { rows } = await query(
         `UPDATE results SET is_published = TRUE, published_at = now(), published_by = $2
           WHERE exam_id = $1 AND NOT is_published RETURNING id`,
@@ -67,7 +112,7 @@ router.post('/publish/:examId', OFFICER, param('examId').isInt(), validate,
   });
 
 // POST /api/results/unpublish/:examId — withdraw publication (admin/officer).
-router.post('/unpublish/:examId', OFFICER, param('examId').isInt(), validate,
+router.post('/unpublish/:examId', RESULTS_APPROVER, param('examId').isInt(), validate,
   async (req, res, next) => {
     try {
       const { rows } = await query(
@@ -100,6 +145,13 @@ router.get('/', async (req, res, next) => {
       const scope = await getLecturerScope(req.user.id);
       params.push(scope?.lecturerId ?? -1);
       where.push(lecturerSubjectSql('r.subject_id', params.length));
+    }
+    if (req.user.role === 'department_head') {
+      // Department heads see results only for subjects of their
+      // department. No linked department → empty list.
+      const deptId = await getDepartmentIdForUser(req.user.id);
+      params.push(deptId ?? -1);
+      where.push(`r.subject_id IN (SELECT id FROM subjects WHERE department_id = $${params.length})`);
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await query(

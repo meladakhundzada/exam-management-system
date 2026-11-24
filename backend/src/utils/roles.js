@@ -1,7 +1,8 @@
 // System roles — names and descriptions must match
-// database/migrations/002_seed.sql exactly, except 'finance', which
-// lives only here: 002_seed.sql is never run in production, so
-// ensureRoles() below is the source of truth that creates it.
+// database/migrations/002_seed.sql exactly, except 'finance',
+// 'exam_controller', 'department_head' and 'invigilator', which live
+// only here: 002_seed.sql is never run in production, so
+// ensureRoles() below is the source of truth that creates them.
 //
 // Why this helper exists: 001_init.sql creates the roles table but seeds
 // NO rows; the roles only exist if 002_seed.sql was run. The live database
@@ -18,6 +19,12 @@ const SYSTEM_ROLES = [
   ['finance', 'Manages fee types, student fees, payments and fee reports'],
   ['lecturer', 'Views assigned subjects/students, enters marks'],
   ['student', 'Views profile, timetable, admit card, published results'],
+  // New roles (master prompt): ensureRoles() below creates them in any
+  // database that ran 001_init.sql only, so no new migration is needed
+  // to make them assignable — user creation just needs the role name.
+  ['exam_controller', 'Manages examination operations, approves schedules and final results, reviews reports, monitors activities'],
+  ['department_head', 'Views department students/lecturers, reviews course and examination information, monitors department results'],
+  ['invigilator', 'Views assigned examination sessions, halls and student lists, records examination attendance, reports absent students'],
 ];
 
 async function ensureRoles(client) {

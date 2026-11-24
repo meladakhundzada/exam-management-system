@@ -26,6 +26,10 @@ import MyProfile from './pages/MyProfile';
 import MyCourses from './pages/MyCourses';
 import MyAttendance from './pages/MyAttendance';
 import AdmitCard from './pages/AdmitCard';
+import ExamManagement from './pages/ExamManagement';
+import MyInvigilation from './pages/MyInvigilation';
+import OnlinePayment from './pages/OnlinePayment';
+import OnlineTransactions from './pages/OnlineTransactions';
 
 function LoginPage() {
   const { login, error, loading, clearError, isAuthenticated } = useAuth();
@@ -121,6 +125,10 @@ function Layout() {
             <Route path="/my-attendance" element={<MyAttendance />} />
             <Route path="/students" element={<Students />} />
             <Route path="/exams" element={<Exams />} />
+            <Route path="/exam-management" element={<ExamManagement />} />
+            <Route path="/my-invigilation" element={<MyInvigilation />} />
+            <Route path="/pay-online" element={<OnlinePayment />} />
+            <Route path="/online-transactions" element={<OnlineTransactions />} />
             <Route path="/marks" element={<Marks />} />
             <Route path="/marks/:examId" element={<Marks />} />
             <Route path="/results" element={<Results />} />

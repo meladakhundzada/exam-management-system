@@ -11,6 +11,7 @@ const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId } = require('../utils/roles');
 const { studentGpa } = require('../utils/gpa');
 const { getLecturerScope, studentInLecturerScope } = require('../utils/lecturerScope');
+const { getDepartmentIdForUser, getInvigilatorScheduleIds } = require('../utils/scopes');
 
 const router = express.Router();
 router.use(authenticate);
@@ -35,7 +36,7 @@ const studentValidators = [
 ];
 
 // GET /api/students?page&limit&search&department_id&status
-router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (req, res, next) => {
+router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer', 'department_head', 'invigilator'), async (req, res, next) => {
   try {
     const { page, limit, offset } = pagination(req);
     const { search = '', department_id, status } = req.query;
@@ -53,6 +54,27 @@ router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (r
                    OR EXISTS (SELECT 1 FROM enrollments en WHERE en.student_id = s.id AND en.status = 'enrolled'
                               AND en.subject_id IN (SELECT id FROM subjects WHERE lecturer_id = $${params.length})))`);
     }
+    // Department heads see only students of their own department (the
+    // caller's department is forced, whatever ?department_id= says).
+    // No linked department → empty list.
+    if (req.user.role === 'department_head') {
+      const deptId = await getDepartmentIdForUser(req.user.id);
+      if (deptId == null) return res.json(paginatedResponse([], 0, { page, limit }));
+      params.push(deptId);
+      where.push(`s.department_id = $${params.length}`);
+    }
+    // Invigilators see only students enrolled in a subject scheduled in
+    // one of their assigned sessions. No assignment → empty list, never
+    // the whole student table.
+    if (req.user.role === 'invigilator') {
+      const scheduleIds = await getInvigilatorScheduleIds(req.user.id);
+      if (!scheduleIds.length) return res.json(paginatedResponse([], 0, { page, limit }));
+      params.push(scheduleIds);
+      where.push(`EXISTS (SELECT 1 FROM enrollments en
+                    JOIN exam_schedules es ON es.subject_id = en.subject_id
+                   WHERE en.student_id = s.id AND en.status = 'enrolled'
+                     AND es.id = ANY($${params.length}::int[]))`);
+    }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await query(`SELECT count(*)::int AS n FROM students s ${clause}`, params);
     const { rows } = await query(
@@ -66,7 +88,7 @@ router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (r
 });
 
 // GET /api/students/:id — full profile + GPA/CGPA (published results only).
-router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer', 'student'),
+router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer', 'student', 'department_head'),
   param('id').isInt(), validate, studentIdMatchesSelf, async (req, res, next) => {
     try {
       const { rows } = await query(
@@ -80,6 +102,14 @@ router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer', 'stude
         const scope = await getLecturerScope(req.user.id);
         if (!scope || !(await studentInLecturerScope(scope.lecturerId, rows[0].id))) {
           return res.status(403).json({ success: false, error: 'Student is not in your department or enrolled in your subjects' });
+        }
+      }
+      // A department head may view a single student only when that
+      // student is in their department. No linked department → 403.
+      if (req.user.role === 'department_head') {
+        const deptId = await getDepartmentIdForUser(req.user.id);
+        if (deptId == null || rows[0].department_id !== deptId) {
+          return res.status(403).json({ success: false, error: 'Student is not in your department' });
         }
       }
       const cgpa = await studentGpa({ query: (t, p) => query(t, p) }, rows[0].id).catch(() => null);

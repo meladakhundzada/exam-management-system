@@ -15,6 +15,9 @@ const ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
   { value: 'finance', label: 'Finance Officer' },
   { value: 'lecturer', label: 'Lecturer' },
   { value: 'student', label: 'Student' },
+  { value: 'exam_controller', label: 'Examination Controller' },
+  { value: 'department_head', label: 'Department Head' },
+  { value: 'invigilator', label: 'Examination Invigilator' },
 ];
 
 const ROLE_BADGE: Record<UserRole, string> = {
@@ -23,6 +26,9 @@ const ROLE_BADGE: Record<UserRole, string> = {
   finance: 'bg-amber-100 text-amber-700',
   lecturer: 'bg-violet-100 text-violet-700',
   student: 'bg-emerald-100 text-emerald-700',
+  exam_controller: 'bg-teal-100 text-teal-700',
+  department_head: 'bg-orange-100 text-orange-700',
+  invigilator: 'bg-cyan-100 text-cyan-700',
 };
 
 const inputCls = 'mt-1 w-full rounded-lg border px-3 py-2 dark:border-slate-600 dark:bg-slate-900';
@@ -104,7 +110,7 @@ export default function Users() {
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [search, roleFilter]);
 
-  const needsDepartment = createForm.role === 'lecturer' || createForm.role === 'student';
+  const needsDepartment = createForm.role === 'lecturer' || createForm.role === 'student' || createForm.role === 'department_head';
 
   const createUser = async (e: React.FormEvent) => {
     e.preventDefault();

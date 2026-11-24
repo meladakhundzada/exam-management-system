@@ -16,6 +16,13 @@ app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') || 'http://localhost:
 app.use(express.json({ limit: '1mb' })); // rejects oversized bodies
 app.use(express.urlencoded({ extended: false }));
 
+// Per-IP rate limiting on every /api route (see middleware/rateLimit.js).
+// trust proxy is required on Render so req.ip is the real client IP,
+// not the proxy's — otherwise every client would share one bucket.
+app.set('trust proxy', 1);
+const { apiLimiter } = require('./middleware/rateLimit');
+app.use('/api', apiLimiter);
+
 // Health check (no auth) — used by uptime monitors and `npm run` smoke tests.
 app.get('/api/health', async (req, res) => {
   try {
@@ -40,6 +47,7 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/departments', require('./routes/departments'));
 app.use('/api/subjects', require('./routes/subjects'));
 app.use('/api/reports', require('./routes/reports'));
+app.use('/api/payments', require('./routes/payments'));
 
 // Reference data used by the frontend forms (faculties, departments,
 // academic years, semesters, subjects, grade scales). Read-only for staff,
