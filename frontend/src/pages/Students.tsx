@@ -231,7 +231,7 @@ export default function Students() {
   const exportCsv = async () => {
     try {
       const res = await studentsApi.exportCsv();
-      downloadBlob(res.data, 'students.csv');
+      downloadBlob(res.data, 'students.xlsx');
     } catch (err) {
       setError(apiErrorMessage(err));
     }

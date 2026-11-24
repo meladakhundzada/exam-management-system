@@ -9,11 +9,12 @@ import {
 } from 'react';
 import { authApi, AuthUser, tokenStore, apiErrorMessage } from '../services/api';
 
-export type Role = AuthUser['role'];
+export type Role = AuthUser['role'] | 'FINANCE';
 
 export const ROLE_LABELS: Record<Role, string> = {
   SUPER_ADMIN: 'Super Admin',
   EXAM_OFFICER: 'Examination Officer',
+  FINANCE: 'Finance Officer',
   LECTURER: 'Lecturer',
   STUDENT: 'Student',
 };
@@ -24,8 +25,9 @@ export const ROLE_ROUTES: Record<Role, string[]> = {
   EXAM_OFFICER: [
     '/dashboard', '/students', '/lecturers', '/departments', '/subjects',
     '/exams', '/timetable', '/attendance', '/marks', '/results', '/fees',
-    '/complaints', '/reports', '/notifications', '/audit-logs',
+    '/complaints', '/reports', '/notifications',
   ],
+  FINANCE: ['/dashboard', '/fees', '/reports'],
   LECTURER: ['/dashboard', '/subjects', '/exams', '/timetable', '/marks', '/results'],
   STUDENT: ['/dashboard', '/timetable', '/results', '/fees', '/admit-card', '/complaints'],
 };
@@ -51,6 +53,7 @@ interface AuthContextValue {
 const ROLE_MAP: Record<string, Role> = {
   super_admin: 'SUPER_ADMIN',
   exam_officer: 'EXAM_OFFICER',
+  finance: 'FINANCE',
   lecturer: 'LECTURER',
   student: 'STUDENT',
 };

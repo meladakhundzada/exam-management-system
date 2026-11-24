@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  feesApi, formatAfn, apiErrorMessage,
+  feesApi, referenceApi, formatAfn, apiErrorMessage,
   FeeType, StudentFee, FeeReport, FeePayment,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -23,7 +23,7 @@ const inputCls = 'mt-1 w-full rounded-lg border px-3 py-2 dark:border-slate-600 
 
 export default function Fees() {
   const { user, hasRole } = useAuth();
-  const isStaff = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  const isStaff = hasRole('SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE');
   const isStudent = hasRole('STUDENT');
 
   const [types, setTypes] = useState<FeeType[]>([]);
@@ -38,6 +38,7 @@ export default function Fees() {
   const [statusFilter, setStatusFilter] = useState('');
 
   const [typeForm, setTypeForm] = useState({ name: '', amount: '', description: '' });
+  const [semesters, setSemesters] = useState<Array<{ id: number; name: string; academic_year?: string }>>([]);
   const [assignForm, setAssignForm] = useState({ fee_type_id: '', target: 'student', student_id: '', department_id: '', semester_id: '', due_date: '' });
   const [payTarget, setPayTarget] = useState<StudentFee | null>(null);
   const [payForm, setPayForm] = useState({ amount: '', payment_method: 'cash', payment_date: new Date().toISOString().slice(0, 10), note: '' });
@@ -77,6 +78,20 @@ export default function Fees() {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => {
+    if (!isStaff) return;
+    referenceApi.get()
+      .then(({ data }) => {
+        const d = data.data as unknown as Record<string, Array<Record<string, unknown>>>;
+        setSemesters((d.semesters ?? []).map((s) => ({
+          id: Number(s.id),
+          name: String(s.name),
+          academic_year: String(s.academic_year ?? ''),
+        })));
+      })
+      .catch(() => setSemesters([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStaff]);
   useEffect(() => {
     if (!isStaff || loading) return;
     const t = setTimeout(() => { loadStaff().catch((e) => setError(apiErrorMessage(e))); }, 400);
@@ -283,7 +298,12 @@ export default function Fees() {
           )}
           <div className="grid grid-cols-2 gap-3">
             <label className="mt-3 block text-sm font-medium">Semester (optional)
-              <input type="number" min={1} max={8} value={assignForm.semester_id} onChange={(e) => setAssignForm({ ...assignForm, semester_id: e.target.value })} className={inputCls} />
+              <select value={assignForm.semester_id} onChange={(e) => setAssignForm({ ...assignForm, semester_id: e.target.value })} className={inputCls}>
+                <option value="">Any semester</option>
+                {semesters.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}{s.academic_year ? ` (${s.academic_year})` : ''}</option>
+                ))}
+              </select>
             </label>
             <label className="mt-3 block text-sm font-medium">Due date
               <input type="date" value={assignForm.due_date} onChange={(e) => setAssignForm({ ...assignForm, due_date: e.target.value })} className={inputCls} />

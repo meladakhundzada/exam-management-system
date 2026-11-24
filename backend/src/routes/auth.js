@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { body } = require('express-validator');
 const { query, withTransaction } = require('../config/db');
 const { signToken, authenticate } = require('../middleware/auth');
@@ -8,6 +9,37 @@ const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId } = require('../utils/roles');
 
 const router = express.Router();
+
+// Linked profile ids for a user: the students/lecturers row (if any) plus
+// its department. The frontend AuthContext reads student_id / lecturer_id /
+// department_id off the login and /auth/me responses (AuthUser.studentId
+// etc.) — without these, students could never resolve their own fees or
+// results. Returns nulls when the user has no linked profile row.
+async function linkedProfiles(userId) {
+  const [student, lecturer] = await Promise.all([
+    query('SELECT id, department_id FROM students WHERE user_id = $1', [userId]),
+    query('SELECT id, department_id FROM lecturers WHERE user_id = $1', [userId]),
+  ]);
+  const s = student.rows[0] || null;
+  const l = lecturer.rows[0] || null;
+  return {
+    student_id: s ? s.id : null,
+    lecturer_id: l ? l.id : null,
+    department_id: s ? s.department_id : (l ? l.department_id : null),
+  };
+}
+
+function publicUser(row, links) {
+  return {
+    id: row.id,
+    full_name: row.full_name,
+    email: row.email,
+    role: row.role,
+    student_id: links ? links.student_id : null,
+    lecturer_id: links ? links.lecturer_id : null,
+    department_id: links ? links.department_id : null,
+  };
+}
 
 // POST /api/auth/login — any role. Returns { token, user }.
 // Rate-limit this route in production (e.g. express-rate-limit).
@@ -34,7 +66,8 @@ router.post(
       await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
       await logAudit({ userId: user.id, action: 'auth.login', entityType: 'users', entityId: user.id, req });
       const token = signToken(user);
-      return res.json({ success: true, token, user: { id: user.id, full_name: user.full_name, email: user.email, role: user.role } });
+      const links = await linkedProfiles(user.id);
+      return res.json({ success: true, token, user: publicUser(user, links) });
     } catch (err) { return next(err); }
   },
 );
@@ -110,8 +143,61 @@ router.get('/me', authenticate, async (req, res, next) => {
       [req.user.id],
     );
     if (!rows[0]) return res.status(404).json({ success: false, error: 'User not found' });
-    return res.json({ success: true, data: rows[0] });
+    const links = await linkedProfiles(rows[0].id);
+    return res.json({ success: true, data: { ...rows[0], ...links } });
   } catch (err) { return next(err); }
 });
+
+// POST /api/auth/refresh — mint a fresh access token from the current one.
+//
+// Why this exists (and why it is implemented this way): the frontend
+// interceptor calls POST /auth/refresh on every 401 and expects
+// { data: { accessToken } } back, but the backend never issued refresh
+// tokens — login returns a single stateless 8h JWT and there is no
+// refresh-token table (adding one would need a migration). So instead of
+// inventing a second token scheme, refresh re-issues an access token from
+// the presented JWT: the token is verified (signature + still belonging to
+// an active user) with expiration ignored, but only if it expired less
+// than 24h ago — a token older than that must sign in again. The client
+// sends the current access token in the Authorization header (the
+// interceptor does this) or as body.token / body.refreshToken. A logout
+// is client-side only (tokenStore.clear), so /logout below is a no-op
+// success that never fails on an expired token.
+router.post('/refresh', async (req, res, next) => {
+  try {
+    const header = req.headers.authorization || '';
+    const presented = header.startsWith('Bearer ') ? header.slice(7)
+      : (req.body?.token || req.body?.refreshToken || null);
+    if (!presented) return res.status(401).json({ success: false, error: 'No token provided' });
+    let decoded;
+    try {
+      decoded = jwt.verify(presented, process.env.JWT_SECRET || 'dev-only-change-me-in-production', { ignoreExpiration: true });
+    } catch {
+      return res.status(401).json({ success: false, error: 'Invalid token' });
+    }
+    const expiredAgoMs = Date.now() - (decoded.exp * 1000);
+    if (expiredAgoMs > 24 * 60 * 60 * 1000) {
+      return res.status(401).json({ success: false, error: 'Token expired too long ago — please sign in again' });
+    }
+    const { rows } = await query(
+      `SELECT u.id, u.full_name, u.email, u.is_active, r.name AS role
+         FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`,
+      [decoded.id],
+    );
+    const user = rows[0];
+    if (!user || !user.is_active) {
+      return res.status(401).json({ success: false, error: 'Invalid email or password' });
+    }
+    const token = signToken(user);
+    const links = await linkedProfiles(user.id);
+    return res.json({ success: true, data: { accessToken: token, refreshToken: null, user: publicUser(user, links) } });
+  } catch (err) { return next(err); }
+});
+
+// POST /api/auth/logout — stateless JWTs cannot be revoked server-side
+// without a denylist table, so logout is the client clearing its token.
+// This endpoint exists so the frontend's authApi.logout() call succeeds
+// instead of 404ing; it takes no auth so it never fails on an expired token.
+router.post('/logout', (req, res) => res.json({ success: true, message: 'Logged out' }));
 
 module.exports = router;

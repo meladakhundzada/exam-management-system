@@ -1,5 +1,7 @@
 // System roles — names and descriptions must match
-// database/migrations/002_seed.sql exactly.
+// database/migrations/002_seed.sql exactly, except 'finance', which
+// lives only here: 002_seed.sql is never run in production, so
+// ensureRoles() below is the source of truth that creates it.
 //
 // Why this helper exists: 001_init.sql creates the roles table but seeds
 // NO rows; the roles only exist if 002_seed.sql was run. The live database
@@ -13,6 +15,7 @@
 const SYSTEM_ROLES = [
   ['super_admin', 'Full access to the entire system'],
   ['exam_officer', 'Manages students, exams, schedules, rooms, attendance, results'],
+  ['finance', 'Manages fee types, student fees, payments and fee reports'],
   ['lecturer', 'Views assigned subjects/students, enters marks'],
   ['student', 'Views profile, timetable, admit card, published results'],
 ];

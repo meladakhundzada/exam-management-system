@@ -46,11 +46,39 @@ router.get('/', async (req, res, next) => {
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await query(`SELECT count(*)::int AS n FROM marks m ${clause}`, params);
     const { rows } = await query(
-      `SELECT m.*, s.student_id, s.full_name AS student_name, sub.code AS subject_code, sub.title AS subject_title
+      `SELECT m.id, m.exam_id, m.subject_id, m.student_id AS student_pk,
+              m.lecturer_id, m.obtained_marks, m.total_marks, m.status, m.remarks,
+              m.entered_at, m.updated_at,
+              s.student_id AS student_no, s.full_name AS student_name,
+              sub.code AS subject_code, sub.title AS subject_title
          FROM marks m JOIN students s ON s.id = m.student_id JOIN subjects sub ON sub.id = m.subject_id
          ${clause} ORDER BY m.updated_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
       [...params, limit, offset]);
     return res.json(paginatedResponse(rows, total.rows[0].n, { page, limit }));
+  } catch (err) { return next(err); }
+});
+
+// GET /api/marks/roster?exam_id&subject_id — students enrolled in the
+// subject, each with their existing mark row for the exam (if any).
+// Marks entry needs a roster, not just existing rows: on a fresh exam
+// GET /api/marks returns nothing, so the page would have nobody to enter
+// marks for. student_pk is the internal students.id (what /bulk needs);
+// student_no is the public STU-… number shown in the UI.
+router.get('/roster', async (req, res, next) => {
+  try {
+    const { exam_id, subject_id } = req.query;
+    if (!exam_id || !subject_id) {
+      return res.status(400).json({ success: false, error: 'exam_id and subject_id query parameters are required' });
+    }
+    const { rows } = await query(
+      `SELECT s.id AS student_pk, s.student_id AS student_no, s.full_name AS student_name,
+              m.id AS mark_id, m.obtained_marks, m.total_marks, m.status
+         FROM enrollments en JOIN students s ON s.id = en.student_id
+         LEFT JOIN marks m ON m.student_id = s.id AND m.exam_id = $1 AND m.subject_id = $2
+        WHERE en.subject_id = $2 AND en.status = 'enrolled' AND s.status = 'active'
+        ORDER BY s.full_name`,
+      [exam_id, subject_id]);
+    return res.json({ success: true, data: rows });
   } catch (err) { return next(err); }
 });
 

@@ -96,7 +96,7 @@ router.get('/', async (req, res, next) => {
     const total = await query(
       `SELECT count(*)::int AS n FROM results r JOIN students s ON s.id = r.student_id ${clause}`, params);
     const { rows } = await query(
-      `SELECT r.*, s.student_id, s.full_name AS student_name, sub.code AS subject_code,
+      `SELECT r.*, r.student_id AS student_pk, s.student_id AS student_no, s.full_name AS student_name, sub.code AS subject_code,
               sub.title AS subject_title, sub.credit_hours, e.title AS exam_title
          FROM results r JOIN students s ON s.id = r.student_id
          JOIN subjects sub ON sub.id = r.subject_id JOIN examinations e ON e.id = r.exam_id
@@ -117,9 +117,10 @@ router.get('/student/:studentId', param('studentId').isInt(), validate, async (r
       }
     }
     const { rows } = await query(
-      `SELECT r.*, sub.code AS subject_code, sub.title AS subject_title, sub.credit_hours,
+      `SELECT r.*, s.student_id AS student_no, s.full_name AS student_name, sub.code AS subject_code, sub.title AS subject_title, sub.credit_hours,
               e.title AS exam_title, e.exam_type
-         FROM results r JOIN subjects sub ON sub.id = r.subject_id
+         FROM results r JOIN students s ON s.id = r.student_id
+         JOIN subjects sub ON sub.id = r.subject_id
          JOIN examinations e ON e.id = r.exam_id
         WHERE r.student_id = $1 AND r.is_published = TRUE ORDER BY e.start_date, sub.code`,
       [req.params.studentId]);

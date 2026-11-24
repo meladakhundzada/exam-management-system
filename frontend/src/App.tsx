@@ -10,6 +10,15 @@ import Results from './pages/Results';
 import Fees from './pages/Fees';
 import Users from './pages/Users';
 import Departments from './pages/Departments';
+import Subjects from './pages/Subjects';
+import Lecturers from './pages/Lecturers';
+import Timetable from './pages/Timetable';
+import Attendance from './pages/Attendance';
+import Complaints from './pages/Complaints';
+import Reports from './pages/Reports';
+import Notifications from './pages/Notifications';
+import AuditLogs from './pages/AuditLogs';
+import Settings from './pages/Settings';
 import Setup from './pages/Setup';
 
 function LoginPage() {
@@ -119,18 +128,18 @@ function Layout() {
             <Route path="/marks/:examId" element={<Marks />} />
             <Route path="/results" element={<Results />} />
             <Route path="/fees" element={<Fees />} />
-            <Route path="/lecturers" element={<Placeholder title="Lecturers" />} />
+            <Route path="/lecturers" element={<Lecturers />} />
             <Route path="/departments" element={<Departments />} />
-            <Route path="/subjects" element={<Placeholder title="Subjects & Courses" />} />
-            <Route path="/timetable" element={<Placeholder title="Examination Timetable" />} />
-            <Route path="/attendance" element={<Placeholder title="Examination Attendance" />} />
+            <Route path="/subjects" element={<Subjects />} />
+            <Route path="/timetable" element={<Timetable />} />
+            <Route path="/attendance" element={<Attendance />} />
             <Route path="/admit-card" element={<Placeholder title="Admit Card" />} />
-            <Route path="/complaints" element={<Placeholder title="Complaints & Rechecking" />} />
-            <Route path="/reports" element={<Placeholder title="Reports & Statistics" />} />
-            <Route path="/notifications" element={<Placeholder title="Notifications & Announcements" />} />
+            <Route path="/complaints" element={<Complaints />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/notifications" element={<Notifications />} />
             <Route path="/users" element={<Users />} />
-            <Route path="/audit-logs" element={<Placeholder title="Audit Logs" />} />
-            <Route path="/settings" element={<Placeholder title="Settings, Grade Scale & Backup" />} />
+            <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </main>

@@ -12,6 +12,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 const ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
   { value: 'super_admin', label: 'Super Admin' },
   { value: 'exam_officer', label: 'Examination Officer' },
+  { value: 'finance', label: 'Finance Officer' },
   { value: 'lecturer', label: 'Lecturer' },
   { value: 'student', label: 'Student' },
 ];
@@ -19,6 +20,7 @@ const ROLE_OPTIONS: Array<{ value: UserRole; label: string }> = [
 const ROLE_BADGE: Record<UserRole, string> = {
   super_admin: 'bg-navy-100 text-navy-800',
   exam_officer: 'bg-blue-100 text-blue-700',
+  finance: 'bg-amber-100 text-amber-700',
   lecturer: 'bg-violet-100 text-violet-700',
   student: 'bg-emerald-100 text-emerald-700',
 };
@@ -56,7 +58,7 @@ export default function Users() {
     try {
       const { data } = await usersApi.list({ page: p, limit: 20, search: search || undefined, role: roleFilter || undefined });
       setUsers(data.data);
-      setTotalPages(data.meta?.totalPages ?? 1);
+      setTotalPages(data.pagination?.totalPages ?? 1);
       setPage(p);
       setError(null);
     } catch (err) { setError(apiErrorMessage(err)); } finally { setLoading(false); }

@@ -17,7 +17,7 @@ const { logAudit } = require('../utils/audit');
 const router = express.Router();
 router.use(authenticate);
 
-const STAFF = ['super_admin', 'exam_officer'];
+const STAFF = ['super_admin', 'exam_officer', 'finance'];
 
 // The students.id for the signed-in student user (null for other roles).
 async function ownStudentId(req) {
@@ -85,7 +85,7 @@ router.get('/student/:studentId', param('studentId').isInt({ min: 1 }), validate
         const mine = await ownStudentId(req);
         if (mine !== studentId) return res.status(403).json({ success: false, error: 'Students can only view their own fees' });
       } else if (!STAFF.includes(req.user.role)) {
-        return res.status(403).json({ success: false, error: 'Forbidden: requires super_admin or exam_officer' });
+        return res.status(403).json({ success: false, error: 'Forbidden: requires super_admin, exam_officer or finance' });
       }
       const { rows } = await query(`${FEE_SELECT} WHERE sf.student_id = $1 ORDER BY sf.due_date ASC NULLS LAST, sf.created_at DESC`, [studentId]);
       const fees = rows.map((r) => ({ ...r, amount_due: Number(r.amount_due), amount_paid: Number(r.amount_paid), balance: Number(r.balance) }));
@@ -225,7 +225,7 @@ router.get('/:id', param('id').isInt({ min: 1 }), validate, async (req, res, nex
       const mine = await ownStudentId(req);
       if (mine !== rows[0].student_id) return res.status(403).json({ success: false, error: 'Students can only view their own fees' });
     } else if (req.user.role === 'lecturer') {
-      return res.status(403).json({ success: false, error: 'Forbidden: requires super_admin or exam_officer' });
+      return res.status(403).json({ success: false, error: 'Forbidden: requires super_admin, exam_officer or finance' });
     }
     const fee = { ...rows[0], amount_due: Number(rows[0].amount_due), amount_paid: Number(rows[0].amount_paid), balance: Number(rows[0].balance) };
     const pays = await query(

@@ -47,7 +47,12 @@ api.interceptors.response.use(
         refreshing = true;
         try {
           const refresh = tokenStore.getRefresh();
-          const { data } = await axios.post(`${API_BASE_URL}/auth/refresh`, { refreshToken: refresh });
+          // POST /auth/refresh re-issues an access token from the current
+          // one (there is no refresh-token table); send the access token
+          // in the Authorization header so the backend can verify it.
+          const { data } = await axios.post(`${API_BASE_URL}/auth/refresh`, { refreshToken: refresh }, {
+            headers: tokenStore.get() ? { Authorization: `Bearer ${tokenStore.get()}` } : {},
+          });
           tokenStore.set(data.data.accessToken, data.data.refreshToken);
           refreshQueue.forEach((cb) => cb(data.data.accessToken));
           refreshQueue = [];
@@ -85,6 +90,7 @@ export interface ApiResponse<T> {
   data: T;
   message?: string;
   meta?: { page: number; limit: number; total: number; totalPages: number };
+  pagination?: { page: number; limit: number; total: number; totalPages: number };
 }
 
 export interface PaginatedParams {
@@ -107,8 +113,10 @@ export const authApi = {
     api.post<ApiResponse<{ accessToken: string; refreshToken: string; user: AuthUser }>>('/auth/login', { email, password }),
   logout: () => api.post('/auth/logout', { refreshToken: tokenStore.getRefresh() }),
   me: () => api.get<ApiResponse<AuthUser>>('/auth/me'),
+  // Backend validates snake_case fields (current_password / new_password);
+  // camelCase here used to fail validation with a 400.
   changePassword: (currentPassword: string, newPassword: string) =>
-    api.post('/auth/change-password', { currentPassword, newPassword }),
+    api.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword }),
   // One-time first Super Admin setup. Works only while no users exist;
   // afterwards the backend returns 403 "Setup already completed: users exist".
   setupFirstAdmin: (fullName: string, email: string, password: string) =>
@@ -122,7 +130,7 @@ export interface AuthUser {
   id: string;
   email: string;
   fullName: string;
-  role: 'SUPER_ADMIN' | 'EXAM_OFFICER' | 'LECTURER' | 'STUDENT';
+  role: 'SUPER_ADMIN' | 'EXAM_OFFICER' | 'LECTURER' | 'STUDENT' | 'FINANCE';
   departmentId?: string | null;
   studentId?: string | null;
   lecturerId?: string | null;
@@ -179,6 +187,13 @@ export interface Exam {
   roomName?: string | null;
   status: 'DRAFT' | 'SCHEDULED' | 'ONGOING' | 'COMPLETED' | 'CANCELLED';
   totalMarks: number;
+  // Snake_case fields the backend actually returns (see normalizeExam).
+  examType?: string;
+  startDate?: string;
+  endDate?: string;
+  semesterName?: string;
+  scheduleCount?: number;
+  publishedResults?: number;
 }
 
 export const studentsApi = {
@@ -190,14 +205,17 @@ export const studentsApi = {
   update: (id: string, payload: UpdateStudentPayload) =>
     api.put<ApiResponse<Student>>(`/students/${id}`, payload),
   remove: (id: string) => api.delete(`/students/${id}`),
-  exportCsv: () => api.get('/students/export?format=csv', { responseType: 'blob' }),
+  // GET /api/reports/students/export — the backend has no /students/export
+  // route (and no CSV format); the real export is xlsx (default) or pdf.
+  exportCsv: () => api.get('/reports/students/export', { responseType: 'blob' }),
 };
 
 export const examsApi = {
   list: (params: PaginatedParams = {}) =>
     api.get<ApiResponse<Exam[]>>(`/exams?${buildQuery(params)}`),
   get: (id: string) => api.get<ApiResponse<Exam>>(`/exams/${id}`),
-  create: (payload: Partial<Exam>) => api.post<ApiResponse<Exam>>('/exams', payload),
+  create: (payload: Omit<Partial<Exam>, 'status'> & { academic_year_id?: number; semester_id?: number; exam_type?: string; start_date?: string; end_date?: string; status?: 'draft' | 'scheduled' | 'ongoing' | 'completed' | 'cancelled' }) =>
+    api.post<ApiResponse<Exam>>('/exams', payload),
   update: (id: string, payload: Partial<Exam>) =>
     api.put<ApiResponse<Exam>>(`/exams/${id}`, payload),
   remove: (id: string) => api.delete(`/exams/${id}`),
@@ -208,25 +226,80 @@ export const examsApi = {
 export interface MarkRow {
   id?: string;
   examId: string;
-  studentId: string;
-  studentNo: string;
+  subjectId?: string;
+  subjectCode?: string;
+  subjectTitle?: string;
+  studentId: string; // internal students.id (what /bulk needs)
+  studentNo: string; // public STU-… number
   studentName: string;
   marksObtained: number | null;
   totalMarks: number;
-  status: 'PENDING' | 'SUBMITTED' | 'APPROVED' | 'REJECTED';
+  status: 'draft' | 'submitted' | 'approved' | 'rejected';
 }
 
+// Backend GET /api/marks rows are snake_case (student_pk = internal id,
+// student_no = public STU-… number); map them to the camelCase MarkRow.
+export function normalizeMarkRow(raw: Record<string, unknown>): MarkRow {
+  return {
+    id: raw.id != null ? String(raw.id) : undefined,
+    examId: String(raw.exam_id ?? ''),
+    subjectId: raw.subject_id != null ? String(raw.subject_id) : undefined,
+    subjectCode: (raw.subject_code as string | undefined) ?? undefined,
+    subjectTitle: (raw.subject_title as string | undefined) ?? undefined,
+    studentId: String(raw.student_pk ?? raw.student_id ?? ''),
+    studentNo: String(raw.student_no ?? raw.student_id ?? ''),
+    studentName: String(raw.student_name ?? ''),
+    marksObtained: raw.obtained_marks == null ? null : Number(raw.obtained_marks),
+    totalMarks: Number(raw.total_marks ?? 100),
+    status: (String(raw.status ?? 'draft') as MarkRow['status']),
+  };
+}
+
+export interface RosterRow {
+  studentPk: string;
+  studentNo: string;
+  studentName: string;
+  markId?: string | null;
+  marksObtained: number | null;
+  totalMarks: number;
+  status: 'draft' | 'submitted' | 'approved' | 'rejected';
+}
+
+export function normalizeRosterRow(raw: Record<string, unknown>): RosterRow {
+  return {
+    studentPk: String(raw.student_pk ?? ''),
+    studentNo: String(raw.student_no ?? ''),
+    studentName: String(raw.student_name ?? ''),
+    markId: raw.mark_id != null ? String(raw.mark_id) : null,
+    marksObtained: raw.obtained_marks == null ? null : Number(raw.obtained_marks),
+    totalMarks: Number(raw.total_marks ?? 100),
+    status: (String(raw.status ?? 'draft') as RosterRow['status']),
+  };
+}
+
+// Real marks endpoints (backend/routes/marks.js). There are no
+// /exams/:id/marks routes on the backend — the old calls 404'd.
 export const marksApi = {
-  byExam: (examId: string) => api.get<ApiResponse<MarkRow[]>>(`/exams/${examId}/marks`),
-  submit: (examId: string, marks: Array<{ studentId: string; marksObtained: number }>) =>
-    api.post(`/exams/${examId}/marks`, { marks }),
-  approve: (examId: string) => api.post(`/exams/${examId}/marks/approve`),
-  reject: (examId: string, reason: string) => api.post(`/exams/${examId}/marks/reject`, { reason }),
+  byExam: (examId: string, subjectId?: string) =>
+    api.get<ApiResponse<Record<string, unknown>[]>>(
+      `/marks?exam_id=${encodeURIComponent(examId)}${subjectId ? `&subject_id=${encodeURIComponent(subjectId)}` : ''}&limit=500`,
+    ),
+  roster: (examId: string, subjectId: string) =>
+    api.get<ApiResponse<Record<string, unknown>[]>>(
+      `/marks/roster?exam_id=${encodeURIComponent(examId)}&subject_id=${encodeURIComponent(subjectId)}`,
+    ),
+  bulk: (examId: string, subjectId: string, marks: Array<{ student_id: number; obtained_marks: number }>) =>
+    api.post<ApiResponse<Record<string, unknown>[]>>('/marks/bulk', {
+      exam_id: Number(examId), subject_id: Number(subjectId), marks,
+    }),
+  submit: (id: string) => api.post<ApiResponse<Record<string, unknown>>>(`/marks/${id}/submit`),
+  approve: (id: string) => api.post<ApiResponse<Record<string, unknown>>>(`/marks/${id}/approve`),
+  reject: (id: string, reason?: string) => api.post<ApiResponse<Record<string, unknown>>>(`/marks/${id}/reject`, { reason }),
 };
 
 export interface ResultRow {
-  studentId: string;
-  studentNo: string;
+  studentId: string; // internal students.id
+  studentNo: string; // public STU-… number
   studentName: string;
   subjectCode: string;
   subjectName: string;
@@ -234,20 +307,93 @@ export interface ResultRow {
   totalMarks: number;
   grade: string;
   gradePoint: number;
-  gpa: number;
+  gpa: number | null; // per-row semester-GPA snapshot (null until calculated)
+  creditHours: number;
+  examTitle?: string;
   status: 'PUBLISHED' | 'UNPUBLISHED';
 }
 
+// Backend GET /api/results rows are snake_case; map them to ResultRow.
+// The list endpoint has no gpa field on the wrapper — GPA is computed
+// from the rows (credit-weighted grade points) by the Results page.
+export function normalizeResultRow(raw: Record<string, unknown>): ResultRow {
+  return {
+    studentId: String(raw.student_pk ?? raw.student_id ?? ''),
+    studentNo: String(raw.student_no ?? raw.student_id ?? ''),
+    studentName: String(raw.student_name ?? ''),
+    subjectCode: String(raw.subject_code ?? ''),
+    subjectName: String(raw.subject_title ?? ''),
+    marksObtained: Number(raw.obtained_marks ?? 0),
+    totalMarks: 100,
+    grade: String(raw.grade ?? ''),
+    gradePoint: Number(raw.grade_point ?? 0),
+    gpa: raw.gpa == null ? null : Number(raw.gpa),
+    creditHours: Number(raw.credit_hours ?? 3),
+    examTitle: (raw.exam_title as string | undefined) ?? undefined,
+    status: raw.is_published ? 'PUBLISHED' : 'UNPUBLISHED',
+  };
+}
+
+// Credit-weighted GPA from result rows (same formula as backend gpa.js).
+export function gpaFromRows(rows: ResultRow[]): number | null {
+  let points = 0;
+  let credits = 0;
+  for (const r of rows) {
+    points += r.gradePoint * r.creditHours;
+    credits += r.creditHours;
+  }
+  if (credits === 0) return null;
+  return Math.round((points / credits) * 1000) / 1000;
+}
+
+// Backend GET /api/exams rows are snake_case examinations (no subject,
+// no per-subject date/time — those live on exam_schedules); map them to
+// the camelCase Exam shape the pages render.
+export function normalizeExam(raw: Record<string, unknown>): Exam {
+  const status = String(raw.status ?? 'draft').toUpperCase() as Exam['status'];
+  return {
+    id: String(raw.id ?? ''),
+    title: String(raw.title ?? ''),
+    subjectId: '',
+    subjectName: '',
+    subjectCode: '',
+    academicYear: String(raw.academic_year ?? ''),
+    semester: Number(raw.semester_id ?? 0),
+    examDate: String(raw.start_date ?? '').slice(0, 10),
+    startTime: '',
+    endTime: '',
+    roomId: null,
+    roomName: null,
+    status,
+    totalMarks: 100,
+    examType: String(raw.exam_type ?? ''),
+    startDate: String(raw.start_date ?? '').slice(0, 10),
+    endDate: String(raw.end_date ?? '').slice(0, 10),
+    semesterName: (raw.semester_name as string | undefined) ?? undefined,
+    scheduleCount: raw.schedule_count != null ? Number(raw.schedule_count) : undefined,
+    publishedResults: raw.published_results != null ? Number(raw.published_results) : undefined,
+  };
+}
+
 export const resultsApi = {
-  byStudent: (studentId: string, semester?: number) =>
-    api.get<ApiResponse<{ results: ResultRow[]; gpa: number; cgpa: number }>>(
-      `/results/student/${studentId}${semester ? `?semester=${semester}` : ''}`,
+  // GET /api/results/student/:studentId — { results, cgpa, total_subjects }.
+  // Takes the INTERNAL students.id; the Results page resolves public
+  // STU-… numbers to it first. No semester param exists on the backend.
+  byStudent: (studentId: string) =>
+    api.get<ApiResponse<{ results: Record<string, unknown>[]; cgpa: number | null; total_subjects: number }>>(
+      `/results/student/${encodeURIComponent(studentId)}`,
     ),
+  list: (params: PaginatedParams = {}) =>
+    api.get<ApiResponse<Record<string, unknown>[]>>(`/results?${buildQuery(params)}`),
+  calculate: (examId: string) => api.post<ApiResponse<Record<string, unknown>[]>>(`/results/calculate/${examId}`),
   publish: (examId: string) => api.post(`/results/publish/${examId}`),
+  unpublish: (examId: string) => api.post(`/results/unpublish/${examId}`),
+  // GET /api/reports/admit-card/:studentId?exam_id= (PDF blob).
   admitCard: (studentId: string, examId: string) =>
-    api.get(`/results/admit-card/${studentId}/${examId}`, { responseType: 'blob' }),
+    api.get(`/reports/admit-card/${encodeURIComponent(studentId)}?exam_id=${encodeURIComponent(examId)}`, { responseType: 'blob' }),
+  // GET /api/reports/student/:studentId/result-pdf (PDF blob).
   transcript: (studentId: string) =>
-    api.get(`/results/transcript/${studentId}`, { responseType: 'blob' }),
+    api.get(`/reports/student/${encodeURIComponent(studentId)}/result-pdf`, { responseType: 'blob' }),
 };
 
 // --- Fees (amounts in AFN; backend returns snake_case rows, as sent by pg) ---
@@ -322,7 +468,7 @@ export const feesApi = {
 };
 
 // --- Users (Super Admin only) ---
-export type UserRole = 'super_admin' | 'exam_officer' | 'lecturer' | 'student';
+export type UserRole = 'super_admin' | 'exam_officer' | 'lecturer' | 'student' | 'finance';
 
 export interface AppUser {
   id: number;
@@ -461,5 +607,191 @@ export function apiErrorMessage(error: unknown): string {
   }
   return error instanceof Error ? error.message : 'An unexpected error occurred.';
 }
+
+// --- Subjects (backend returns snake_case rows, as sent by pg) ---
+// Schema note: the table has credit_hours (not `credits`) and
+// semester_id (not a plain `semester` column).
+export interface Subject {
+  id: number;
+  code: string;
+  title: string;
+  department_id: number;
+  department_name?: string;
+  department_code?: string;
+  semester_id?: number | null;
+  semester_name?: string | null;
+  lecturer_id?: number | null;
+  lecturer_name?: string | null;
+  credit_hours: number;
+  description?: string | null;
+  is_active: boolean;
+}
+
+export interface SubjectPayload {
+  code: string;
+  title: string;
+  department_id: number;
+  credit_hours?: number;
+  semester_id?: number;
+  lecturer_id?: number;
+  description?: string;
+  is_active?: boolean;
+}
+
+export const subjectsApi = {
+  list: (params: PaginatedParams = {}) =>
+    api.get<ApiResponse<Subject[]>>(`/subjects?${buildQuery(params)}`),
+  get: (id: number) => api.get<ApiResponse<Subject>>(`/subjects/${id}`),
+  create: (payload: SubjectPayload) =>
+    api.post<ApiResponse<Subject>>('/subjects', payload),
+  update: (id: number, payload: Partial<SubjectPayload>) =>
+    api.put<ApiResponse<Subject>>(`/subjects/${id}`, payload),
+  remove: (id: number) => api.delete(`/subjects/${id}`),
+};
+
+// --- Lecturers (read-only page; creation happens via Users) ---
+export interface Lecturer {
+  id: number;
+  employee_id: string;
+  full_name: string;
+  email: string;
+  phone?: string | null;
+  department_id: number;
+  department_name?: string;
+  designation?: string | null;
+  qualification?: string | null;
+  is_active: boolean;
+  subjects?: Array<{ id: number; code: string; title: string; credit_hours: number }>;
+}
+
+export const lecturersApi = {
+  list: (params: PaginatedParams = {}) =>
+    api.get<ApiResponse<Lecturer[]>>(`/lecturers?${buildQuery(params)}`),
+  get: (id: number) => api.get<ApiResponse<Lecturer>>(`/lecturers/${id}`),
+};
+
+// --- Attendance (per exam schedule) ---
+export interface AttendanceRecord {
+  id?: number;
+  exam_schedule_id?: number;
+  student_id: number;
+  studentNo?: string;
+  full_name?: string;
+  room_id?: number | null;
+  status: 'present' | 'absent' | 'late';
+  marked_at?: string;
+}
+
+export const attendanceApi = {
+  get: (scheduleId: number) =>
+    api.get<ApiResponse<AttendanceRecord[]>>(`/exams/schedules/${scheduleId}/attendance`),
+  mark: (scheduleId: number, records: Array<{ student_id: number; status: 'present' | 'absent' | 'late'; room_id?: number }>) =>
+    api.post<ApiResponse<AttendanceRecord[]>>(`/exams/schedules/${scheduleId}/attendance`, { records }),
+  rooms: () => api.get<ApiResponse<Array<{ id: number; name: string; building?: string | null; capacity: number }>>>('/exams/rooms/list'),
+};
+
+// --- Complaints ---
+export type ComplaintType = 'rechecking' | 'marks_correction' | 'absent_marked' | 'other';
+export type ComplaintStatus = 'pending' | 'under_review' | 'resolved' | 'rejected';
+
+export interface Complaint {
+  id: number;
+  student_id: number;
+  student_name?: string;
+  exam_id?: number | null;
+  exam_title?: string | null;
+  subject_id?: number | null;
+  subject_code?: string | null;
+  result_id?: number | null;
+  type: ComplaintType;
+  description: string;
+  status: ComplaintStatus;
+  resolution?: string | null;
+  created_at: string;
+}
+
+export const complaintsApi = {
+  // Student's own complaints (staff may also call it for any student).
+  forStudent: (studentId: number) =>
+    api.get<ApiResponse<Complaint[]>>(`/students/${studentId}/complaints`),
+  file: (studentId: number, payload: { type: ComplaintType; description: string; exam_id?: number; subject_id?: number; result_id?: number }) =>
+    api.post<ApiResponse<Complaint>>(`/students/${studentId}/complaints`, payload),
+  // Officer review queue (super_admin / exam_officer only).
+  reviewList: (status?: string) =>
+    api.get<ApiResponse<Complaint[]>>(`/results/complaints/list${status ? `?status=${status}` : ''}`),
+  review: (id: number, payload: { status: ComplaintStatus; resolution?: string }) =>
+    api.put<ApiResponse<Complaint>>(`/results/complaints/${id}`, payload),
+};
+
+// --- Reports, notifications, audit logs, grade scales ---
+export interface ReportDashboard {
+  total_students: number;
+  total_lecturers: number;
+  total_departments: number;
+  total_subjects: number;
+  upcoming_exams: number;
+  completed_exams: number;
+  published_results: number;
+  pending_marks: number;
+  pending_complaints: number;
+  students_by_department: Array<{ department: string; students: number }>;
+  grade_distribution: Array<{ grade: string; count: number }>;
+}
+
+export interface NotificationItem {
+  id: number;
+  user_id?: number | null;
+  role_id?: number | null;
+  title: string;
+  message: string;
+  type: 'info' | 'exam' | 'result' | 'announcement' | 'alert';
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface AuditLogItem {
+  id: number;
+  user_id?: number | null;
+  user_name?: string | null;
+  action: string;
+  entity_type?: string | null;
+  entity_id?: number | null;
+  created_at: string;
+}
+
+export interface GradeScale {
+  id: number;
+  grade: string;
+  min_marks: number;
+  max_marks: number;
+  grade_point: number;
+  remarks?: string | null;
+  is_passing: boolean;
+}
+
+export const reportsApi = {
+  dashboard: () => api.get<ApiResponse<ReportDashboard>>('/reports/dashboard'),
+  studentsExport: (format: 'xlsx' | 'pdf' = 'xlsx', departmentId?: number) =>
+    api.get(`/reports/students/export?format=${format}${departmentId ? `&department_id=${departmentId}` : ''}`, { responseType: 'blob' }),
+  scheduleExport: (examId: number, format: 'xlsx' | 'pdf' = 'xlsx') =>
+    api.get(`/reports/exams/${examId}/schedule/export?format=${format}`, { responseType: 'blob' }),
+  resultsExport: (examId: number, format: 'xlsx' | 'pdf' = 'xlsx') =>
+    api.get(`/reports/results/${examId}/export?format=${format}`, { responseType: 'blob' }),
+  admitCard: (studentId: number, examId: number) =>
+    api.get(`/reports/admit-card/${studentId}?exam_id=${examId}`, { responseType: 'blob' }),
+  resultPdf: (studentId: number) =>
+    api.get(`/reports/student/${studentId}/result-pdf`, { responseType: 'blob' }),
+  notifications: () => api.get<ApiResponse<NotificationItem[]>>('/reports/notifications'),
+  createNotification: (payload: { title: string; message: string; type?: NotificationItem['type'] }) =>
+    api.post<ApiResponse<NotificationItem>>('/reports/notifications', payload),
+  auditLogs: (page = 1, limit = 50) =>
+    api.get<ApiResponse<AuditLogItem[]>>(`/reports/audit-logs?page=${page}&limit=${limit}`),
+};
+
+export const gradeScalesApi = {
+  list: () => api.get<ApiResponse<GradeScale[]>>('/results/grade-scales/list'),
+  update: (grade: string, payload: { min_marks?: number; max_marks?: number; grade_point?: number; is_passing?: boolean }) =>
+    api.put<ApiResponse<GradeScale>>(`/results/grade-scales/${encodeURIComponent(grade)}`, payload),
+};
 
 export default api;

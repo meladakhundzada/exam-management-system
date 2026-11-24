@@ -5,11 +5,11 @@ interface NavItem {
   to: string;
   label: string;
   icon: string;
-  roles: Array<'SUPER_ADMIN' | 'EXAM_OFFICER' | 'LECTURER' | 'STUDENT'>;
+  roles: Array<'SUPER_ADMIN' | 'EXAM_OFFICER' | 'FINANCE' | 'LECTURER' | 'STUDENT'>;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
+  { to: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT'] },
   { to: '/students', label: 'Students', icon: '🎓', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/lecturers', label: 'Lecturers', icon: '👩‍🏫', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/departments', label: 'Departments', icon: '🏛️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
@@ -19,10 +19,10 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/attendance', label: 'Attendance', icon: '✅', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/marks', label: 'Marks Entry', icon: '✏️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/results', label: 'Results', icon: '📊', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
-  { to: '/fees', label: 'Fees', icon: '💰', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'STUDENT'] },
+  { to: '/fees', label: 'Fees', icon: '💰', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'STUDENT'] },
   { to: '/admit-card', label: 'Admit Card', icon: '🎫', roles: ['STUDENT'] },
   { to: '/complaints', label: 'Complaints / Rechecking', icon: '🔍', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'STUDENT'] },
-  { to: '/reports', label: 'Reports', icon: '📄', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
+  { to: '/reports', label: 'Reports', icon: '📄', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE'] },
   { to: '/notifications', label: 'Notifications', icon: '🔔', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/users', label: 'User Management', icon: '👥', roles: ['SUPER_ADMIN'] },
   { to: '/audit-logs', label: 'Audit Logs', icon: '🧾', roles: ['SUPER_ADMIN'] },

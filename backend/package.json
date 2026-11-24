@@ -21,8 +21,8 @@
     "name": "exam-management-system-backend",
     "scripts": {
         "dev": "node --watch src/server.js",
-        "migrate": "psql \"$DATABASE_URL\" -f ../database/migrations/001_init.sql && psql \"$DATABASE_URL\" -f ../database/migrations/003_fees.sql && psql \"$DATABASE_URL\" -f ../database/migrations/004_departments.sql && psql \"$DATABASE_URL\" -f ../database/migrations/002_seed.sql",
-        "migrate:schema": "psql \"$DATABASE_URL\" -f ../database/migrations/001_init.sql && psql \"$DATABASE_URL\" -f ../database/migrations/003_fees.sql && psql \"$DATABASE_URL\" -f ../database/migrations/004_departments.sql",
+        "migrate": "psql \"$DATABASE_URL\" -f ../database/migrations/001_init.sql && psql \"$DATABASE_URL\" -f ../database/migrations/003_fees.sql && psql \"$DATABASE_URL\" -f ../database/migrations/004_departments.sql && psql \"$DATABASE_URL\" -f ../database/migrations/002_seed.sql && psql \"$DATABASE_URL\" -f ../database/migrations/005_reference_data.sql",
+        "migrate:schema": "psql \"$DATABASE_URL\" -f ../database/migrations/001_init.sql && psql \"$DATABASE_URL\" -f ../database/migrations/003_fees.sql && psql \"$DATABASE_URL\" -f ../database/migrations/004_departments.sql && psql \"$DATABASE_URL\" -f ../database/migrations/005_reference_data.sql",
         "seed": "psql \"$DATABASE_URL\" -f ../database/migrations/002_seed.sql",
         "start": "node src/server.js"
     },
