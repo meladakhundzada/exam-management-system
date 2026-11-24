@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -53,13 +53,6 @@ function LoginPage() {
         <button type="submit" disabled={loading} className="mt-6 w-full rounded-lg bg-navy-600 py-2.5 font-semibold text-white hover:bg-navy-700 disabled:opacity-50">
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
-        <p className="mt-4 text-center text-sm">
-          <Link to="/setup" className="text-navy-600 hover:underline">Create the first Super Admin</Link>
-        </p>
-        <p className="mt-4 text-xs leading-relaxed text-slate-500">
-          Demo accounts are listed in docs/USER_GUIDE.md. Change the default Super Admin
-          password on first login (Settings → Change password).
-        </p>
       </form>
     </div>
   );
