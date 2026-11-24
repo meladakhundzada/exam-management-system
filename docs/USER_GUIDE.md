@@ -103,6 +103,15 @@ that does it and where to click.
   *[Screenshot: Dashboard — eight stat cards; "Exams per month" bar chart; "Exams by status" pie chart; department GPA line chart; recent activity list.]*
 - **Users** — create users, assign one of the four roles, deactivate accounts,
   reset passwords. Deactivating a user immediately invalidates their sessions.
+  Create the Exam Officer from here: full name `abas`, email
+  `abbasaziz07825@gmail.com`, role Examination Officer, with a password
+  abas chooses himself (at least 8 characters). A lecturer account also
+  creates (or links) the lecturer record — for Eng Irfan use employee_id
+  `LEC-007` so his existing record and BCS subjects are linked, not
+  duplicated. A student account also creates (or links) the student
+  record (needs department, student ID and admission year). You cannot
+  delete yourself or the last Super Admin, and you cannot deactivate
+  your own account.
 - **Departments & Faculties** — create faculties, then departments inside them.
   A department cannot be deleted while students or subjects still belong to it.
 - **Settings** — grade scale, academic year/semester, pass thresholds, system

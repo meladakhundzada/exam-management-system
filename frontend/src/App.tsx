@@ -8,6 +8,7 @@ import Exams from './pages/Exams';
 import Marks from './pages/Marks';
 import Results from './pages/Results';
 import Fees from './pages/Fees';
+import Users from './pages/Users';
 import Setup from './pages/Setup';
 
 function LoginPage() {
@@ -133,7 +134,7 @@ function Layout() {
             <Route path="/complaints" element={<Placeholder title="Complaints & Rechecking" />} />
             <Route path="/reports" element={<Placeholder title="Reports & Statistics" />} />
             <Route path="/notifications" element={<Placeholder title="Notifications & Announcements" />} />
-            <Route path="/users" element={<Placeholder title="User Management" />} />
+            <Route path="/users" element={<Users />} />
             <Route path="/audit-logs" element={<Placeholder title="Audit Logs" />} />
             <Route path="/settings" element={<Placeholder title="Settings, Grade Scale & Backup" />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

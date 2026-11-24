@@ -300,6 +300,56 @@ export const feesApi = {
     api.post<ApiResponse<{ payment: FeePayment; fee: StudentFee }>>(`/fees/${id}/pay`, payload),
 };
 
+// --- Users (Super Admin only) ---
+export type UserRole = 'super_admin' | 'exam_officer' | 'lecturer' | 'student';
+
+export interface AppUser {
+  id: number;
+  full_name: string;
+  email: string;
+  phone?: string | null;
+  role: UserRole;
+  is_active: boolean;
+  last_login_at?: string | null;
+  created_at: string;
+  lecturer_id?: number | null;
+  student_id?: number | null;
+}
+
+export interface CreateUserPayload {
+  full_name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+  phone?: string;
+  department_id?: number;
+  employee_id?: string;
+  student_id?: string;
+  admission_year?: number;
+  current_semester?: number;
+}
+
+export const usersApi = {
+  list: (params: PaginatedParams = {}) =>
+    api.get<ApiResponse<AppUser[]>>(`/users?${buildQuery(params)}`),
+  get: (id: number) => api.get<ApiResponse<AppUser>>(`/users/${id}`),
+  create: (payload: CreateUserPayload) =>
+    api.post<ApiResponse<AppUser>>('/users', payload),
+  update: (id: number, payload: Partial<Pick<AppUser, 'full_name' | 'phone' | 'role' | 'is_active'>>) =>
+    api.put<ApiResponse<AppUser>>(`/users/${id}`, payload),
+  remove: (id: number) => api.delete<ApiResponse<{ message: string }>>(`/users/${id}`),
+};
+
+export const referenceApi = {
+  get: () => api.get<ApiResponse<{
+    faculties: Array<{ id: number; name: string }>;
+    departments: Array<{ id: number; name: string; code: string; faculty_id: number }>;
+    academic_years: Array<{ id: number; name: string }>;
+    semesters: Array<{ id: number; name: string; semester_number: number }>;
+    subjects: Array<{ id: number; code: string; title: string }>;
+  }>>('/reference'),
+};
+
 export const dashboardApi = {
   stats: () => api.get<ApiResponse<DashboardStats>>('/dashboard/stats'),
   recentActivity: () => api.get<ApiResponse<ActivityItem[]>>('/dashboard/activity?limit=10'),

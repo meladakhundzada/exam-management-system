@@ -291,6 +291,37 @@ remaining balance. Receipt numbers are `REC-YYYY-NNNN`
 // 400 if the payment exceeds the remaining balance.
 ```
 
+## 10. Users — `/api/users`
+
+Super Admin only. Creates login accounts for all four roles. Creating
+a lecturer or student also creates (or links) the matching
+`lecturers` / `students` row, so the person can actually use the
+system. Passwords are supplied by the caller (minimum 8 characters);
+there is no default password.
+
+| Method & path | Roles | Description |
+|---|---|---|
+| `GET /api/users?page&limit&search&role` | super_admin | Paginated list (no password hashes); `role` filters by `super_admin`, `exam_officer`, `lecturer` or `student` |
+| `GET /api/users/:id` | super_admin | One user |
+| `POST /api/users` | super_admin | Create a user (`{ full_name, email, password, role, phone?, department_id?, employee_id?, student_id?, admission_year?, current_semester? }`). `department_id` is required for lecturer/student; `student_id` + `admission_year` for student. `employee_id` is optional for a lecturer (auto-generated `LEC-008` …); passing `LEC-007` links Eng Irfan's existing seed row instead of creating a second lecturer. An existing unlinked student row with the same `student_id` is linked the same way |
+| `PUT /api/users/:id` | super_admin | Change `full_name`, `phone`, `role` or `is_active`. You cannot deactivate yourself or change your own role |
+| `DELETE /api/users/:id` | super_admin | Delete a user. Cannot delete yourself or the last active Super Admin. Linked lecturer/student rows stay (their `user_id` is set to NULL) — delete those records from the Lecturers/Students pages if they should go too |
+
+```json
+// POST /api/users — create the Exam Officer (abas)
+{ "full_name": "abas", "email": "abbasaziz07825@gmail.com",
+  "password": "<choose-a-password-of-8-or-more-characters>", "role": "exam_officer" }
+// 201 — { "success": true, "data": { "id": 2, "full_name": "abas",
+//         "email": "abbasaziz07825@gmail.com", "role": "exam_officer", "is_active": true }, "message": "User created." }
+// 409 if the email already exists, or the lecturer/student already has a login account.
+
+// POST /api/users — create the Lecturer (Irfan), linking his seed row LEC-007
+{ "full_name": "Eng Irfan", "email": "irfankarimzai9@gmail.com",
+  "password": "<choose-a-password-of-8-or-more-characters>", "role": "lecturer",
+  "department_id": 1, "employee_id": "LEC-007" }
+// 201 — { "success": true, "data": { "id": 3, "role": "lecturer", "lecturer_id": 7, … } }
+```
+
 ## Audit logging
 
 Every mutation (login, create/update/delete, marks submit/approve/reject,
