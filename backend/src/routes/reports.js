@@ -7,30 +7,64 @@ const { query } = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { param } = require('express-validator');
-const { studentGpa } = require('../utils/gpa');
+const { studentGpa, calculateGpa } = require('../utils/gpa');
+const { getLecturerScope, studentInLecturerScope } = require('../utils/lecturerScope');
 
 const router = express.Router();
 router.use(authenticate);
 const STAFF = requireRole('super_admin', 'exam_officer');
 
 // GET /api/reports/dashboard — counts + charts data for the dashboard.
+// Lecturers get the same shape but scoped to their own courses: students
+// in their department / enrolled in their subjects, their subjects and
+// exams, and results/marks/complaints for their subjects only. Every
+// other role keeps the existing global counts.
 router.get('/dashboard', async (req, res, next) => {
   try {
-    const counts = await query(
-      `SELECT (SELECT count(*)::int FROM students WHERE status='active') AS total_students,
-              (SELECT count(*)::int FROM lecturers WHERE is_active) AS total_lecturers,
-              (SELECT count(*)::int FROM departments) AS total_departments,
-              (SELECT count(*)::int FROM subjects WHERE is_active) AS total_subjects,
-              (SELECT count(*)::int FROM examinations WHERE status IN ('scheduled','ongoing')) AS upcoming_exams,
-              (SELECT count(*)::int FROM examinations WHERE status='completed') AS completed_exams,
-              (SELECT count(*)::int FROM results WHERE is_published) AS published_results,
-              (SELECT count(*)::int FROM marks WHERE status='submitted') AS pending_marks,
-              (SELECT count(*)::int FROM complaints WHERE status='pending') AS pending_complaints`);
-    const byDept = await query(
-      `SELECT d.name AS department, count(s.id)::int AS students FROM departments d
-        LEFT JOIN students s ON s.department_id = d.id GROUP BY d.name ORDER BY students DESC`);
-    const gradeDist = await query(
-      `SELECT grade, count(*)::int AS count FROM results WHERE is_published GROUP BY grade ORDER BY grade`);
+    let counts; let byDept; let gradeDist;
+    if (req.user.role === 'lecturer') {
+      const scope = await getLecturerScope(req.user.id);
+      const p = [scope?.lecturerId ?? -1];
+      const ownSubjects = 'subject_id IN (SELECT id FROM subjects WHERE lecturer_id = $1)';
+      const ownExam = `EXISTS (SELECT 1 FROM exam_schedules es WHERE es.exam_id = e.id AND es.${ownSubjects})`;
+      counts = await query(
+        `SELECT (SELECT count(*)::int FROM students s WHERE s.status='active' AND (
+                    s.department_id = (SELECT department_id FROM lecturers WHERE id = $1)
+                    OR EXISTS (SELECT 1 FROM enrollments en WHERE en.student_id = s.id AND en.status = 'enrolled'
+                               AND en.subject_id IN (SELECT id FROM subjects WHERE lecturer_id = $1)))) AS total_students,
+                1 AS total_lecturers,
+                (SELECT count(DISTINCT department_id)::int FROM subjects WHERE lecturer_id = $1) AS total_departments,
+                (SELECT count(*)::int FROM subjects WHERE is_active AND lecturer_id = $1) AS total_subjects,
+                (SELECT count(*)::int FROM examinations e WHERE e.status IN ('scheduled','ongoing') AND ${ownExam}) AS upcoming_exams,
+                (SELECT count(*)::int FROM examinations e WHERE e.status='completed' AND ${ownExam}) AS completed_exams,
+                (SELECT count(*)::int FROM results WHERE is_published AND ${ownSubjects}) AS published_results,
+                (SELECT count(*)::int FROM marks WHERE status='submitted' AND ${ownSubjects}) AS pending_marks,
+                (SELECT count(*)::int FROM complaints WHERE status='pending' AND ${ownSubjects}) AS pending_complaints`,
+        p);
+      byDept = await query(
+        `SELECT d.name AS department, count(s.id)::int AS students FROM departments d
+          LEFT JOIN students s ON s.department_id = d.id
+         WHERE d.id IN (SELECT department_id FROM subjects WHERE lecturer_id = $1)
+         GROUP BY d.name ORDER BY students DESC`, p);
+      gradeDist = await query(
+        `SELECT grade, count(*)::int AS count FROM results WHERE is_published AND ${ownSubjects} GROUP BY grade ORDER BY grade`, p);
+    } else {
+      counts = await query(
+        `SELECT (SELECT count(*)::int FROM students WHERE status='active') AS total_students,
+                (SELECT count(*)::int FROM lecturers WHERE is_active) AS total_lecturers,
+                (SELECT count(*)::int FROM departments) AS total_departments,
+                (SELECT count(*)::int FROM subjects WHERE is_active) AS total_subjects,
+                (SELECT count(*)::int FROM examinations WHERE status IN ('scheduled','ongoing')) AS upcoming_exams,
+                (SELECT count(*)::int FROM examinations WHERE status='completed') AS completed_exams,
+                (SELECT count(*)::int FROM results WHERE is_published) AS published_results,
+                (SELECT count(*)::int FROM marks WHERE status='submitted') AS pending_marks,
+                (SELECT count(*)::int FROM complaints WHERE status='pending') AS pending_complaints`);
+      byDept = await query(
+        `SELECT d.name AS department, count(s.id)::int AS students FROM departments d
+          LEFT JOIN students s ON s.department_id = d.id GROUP BY d.name ORDER BY students DESC`);
+      gradeDist = await query(
+        `SELECT grade, count(*)::int AS count FROM results WHERE is_published GROUP BY grade ORDER BY grade`);
+    }
     // Privacy rule (same as GET /api/dashboard/activity): Super Admin sees
     // everyone's recent activity; every other role sees only their own
     // entries, so one user's logins/actions never leak to another role.
@@ -68,15 +102,23 @@ router.get('/students/export', STAFF, async (req, res, next) => {
 });
 
 // GET /api/reports/exams/:examId/schedule/export?format=xlsx|pdf
-router.get('/exams/:examId/schedule/export', STAFF, param('examId').isInt(), validate, async (req, res, next) => {
+// Lecturers may export it too, but only the rows for their own subjects.
+router.get('/exams/:examId/schedule/export', requireRole('super_admin', 'exam_officer', 'lecturer'), param('examId').isInt(), validate, async (req, res, next) => {
   try {
     const { format = 'xlsx' } = req.query;
+    const params = [req.params.examId];
+    let extra = '';
+    if (req.user.role === 'lecturer') {
+      const scope = await getLecturerScope(req.user.id);
+      params.push(scope?.lecturerId ?? -1);
+      extra = ` AND sub.id IN (SELECT id FROM subjects WHERE lecturer_id = $${params.length})`;
+    }
     const { rows } = await query(
       `SELECT es.exam_date, es.start_time, es.end_time, sub.code, sub.title, er.name AS room
          FROM exam_schedules es JOIN subjects sub ON sub.id = es.subject_id
          LEFT JOIN room_allocations ra ON ra.exam_schedule_id = es.id
          LEFT JOIN exam_rooms er ON er.id = ra.room_id
-        WHERE es.exam_id = $1 ORDER BY es.exam_date, es.start_time`, [req.params.examId]);
+        WHERE es.exam_id = $1${extra} ORDER BY es.exam_date, es.start_time`, params);
     if (format === 'pdf') return sendPdf(res, 'Examination Schedule', ['Date', 'Time', 'Subject', 'Title', 'Room'],
       rows.map((r) => [String(r.exam_date).slice(0, 10), `${r.start_time}–${r.end_time}`, r.code, r.title, r.room || '—']));
     return sendXlsx(res, 'schedule.xlsx', 'Schedule', ['Date', 'Start', 'End', 'Subject Code', 'Subject', 'Room'],
@@ -85,12 +127,18 @@ router.get('/exams/:examId/schedule/export', STAFF, param('examId').isInt(), val
 });
 
 // GET /api/reports/results/:examId/export?format=xlsx|pdf — published only.
-router.get('/results/:examId/export', STAFF, param('examId').isInt(), validate, async (req, res, next) => {
+// Lecturers may export it too, but only results for their own subjects.
+router.get('/results/:examId/export', requireRole('super_admin', 'exam_officer', 'lecturer'), param('examId').isInt(), validate, async (req, res, next) => {
   try {
     const { format = 'xlsx', department_id } = req.query;
     const params = [req.params.examId];
     let extra = '';
     if (department_id) { params.push(department_id); extra = ' AND s.department_id = $2'; }
+    if (req.user.role === 'lecturer') {
+      const scope = await getLecturerScope(req.user.id);
+      params.push(scope?.lecturerId ?? -1);
+      extra += ` AND r.subject_id IN (SELECT id FROM subjects WHERE lecturer_id = $${params.length})`;
+    }
     const { rows } = await query(
       `SELECT s.student_id, s.full_name, sub.code, sub.title, r.obtained_marks, r.grade, r.grade_point, r.gpa
          FROM results r JOIN students s ON s.id = r.student_id JOIN subjects sub ON sub.id = r.subject_id
@@ -117,6 +165,20 @@ router.get('/admit-card/:studentId', param('studentId').isInt(), validate, async
       `SELECT s.*, d.name AS department_name FROM students s JOIN departments d ON d.id = s.department_id WHERE s.id = $1`,
       [req.params.studentId]);
     if (!student.rows[0]) return res.status(404).json({ success: false, error: 'Student not found' });
+    // A lecturer may download an admit card only for a student enrolled in
+    // one of their subjects in this exam — otherwise the card would expose
+    // another lecturer's timetable to them.
+    if (req.user.role === 'lecturer') {
+      const scope = await getLecturerScope(req.user.id);
+      const allowed = scope && await query(
+        `SELECT 1 FROM enrollments en JOIN exam_schedules es ON es.subject_id = en.subject_id AND es.exam_id = $3
+          WHERE en.student_id = $1 AND en.status = 'enrolled'
+          AND en.subject_id IN (SELECT id FROM subjects WHERE lecturer_id = $2) LIMIT 1`,
+        [req.params.studentId, scope.lecturerId, exam_id]);
+      if (!allowed?.rows.length) {
+        return res.status(403).json({ success: false, error: 'Admit card is not for one of your assigned subjects' });
+      }
+    }
     const { rows } = await query(
       `SELECT es.exam_date, es.start_time, es.end_time, sub.code, sub.title, er.name AS room, e.title AS exam_title
          FROM enrollments en JOIN exam_schedules es ON es.subject_id = en.subject_id AND es.exam_id = $2
@@ -148,13 +210,23 @@ router.get('/student/:studentId/result-pdf', param('studentId').isInt(), validat
       const s = await query('SELECT id FROM students WHERE user_id = $1', [req.user.id]);
       if (!s.rows[0] || s.rows[0].id !== Number(req.params.studentId)) return res.status(403).json({ success: false, error: 'Students can only download their own results' });
     }
+    // A lecturer's copy contains only their own subjects' results, and
+    // its CGPA is computed over those rows only.
+    const isLecturer = req.user.role === 'lecturer';
+    const resultParams = [req.params.studentId];
+    let resultExtra = '';
+    if (isLecturer) {
+      const scope = await getLecturerScope(req.user.id);
+      resultParams.push(scope?.lecturerId ?? -1);
+      resultExtra = ` AND r.subject_id IN (SELECT id FROM subjects WHERE lecturer_id = $${resultParams.length})`;
+    }
     const { rows } = await query(
       `SELECT r.*, sub.code, sub.title, sub.credit_hours, e.title AS exam_title, s.full_name, s.student_id
          FROM results r JOIN subjects sub ON sub.id = r.subject_id JOIN examinations e ON e.id = r.exam_id
          JOIN students s ON s.id = r.student_id
-        WHERE r.student_id = $1 AND r.is_published ORDER BY e.start_date, sub.code`, [req.params.studentId]);
+        WHERE r.student_id = $1 AND r.is_published${resultExtra} ORDER BY e.start_date, sub.code`, resultParams);
     if (!rows.length) return res.status(404).json({ success: false, error: 'No published results found' });
-    const cgpa = await studentGpa({ query: (t, p) => query(t, p) }, Number(req.params.studentId));
+    const cgpa = isLecturer ? calculateGpa(rows) : await studentGpa({ query: (t, p) => query(t, p) }, Number(req.params.studentId));
     const doc = new PDFDocument({ margin: 50 });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="result-${rows[0].student_id}.pdf"`);
@@ -178,14 +250,33 @@ router.get('/notifications', async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
-router.post('/notifications', STAFF, async (req, res, next) => {
+// Lecturers may message one of their own students: they send student_id
+// (students.id); the student's users.id is resolved here and the scope is
+// checked. Lecturers cannot broadcast or target a role. Staff keep the
+// existing behaviour (broadcast / user_id / role_id).
+router.post('/notifications', requireRole('super_admin', 'exam_officer', 'lecturer'), async (req, res, next) => {
   try {
-    const { title, message, type = 'announcement', role_id, user_id } = req.body;
+    const { title, message, type = 'announcement', role_id, user_id, student_id } = req.body;
     if (!title || !message) return res.status(400).json({ success: false, error: 'title and message are required' });
+    let targetUserId = user_id || null;
+    let targetRoleId = role_id || null;
+    if (req.user.role === 'lecturer') {
+      if (role_id || user_id || !student_id) {
+        return res.status(400).json({ success: false, error: 'Lecturers can only message one of their own students (student_id required)' });
+      }
+      const scope = await getLecturerScope(req.user.id);
+      if (!scope || !(await studentInLecturerScope(scope.lecturerId, student_id))) {
+        return res.status(403).json({ success: false, error: 'Student is not one of your assigned students' });
+      }
+      const s = await query('SELECT user_id FROM students WHERE id = $1', [student_id]);
+      if (!s.rows[0]?.user_id) return res.status(400).json({ success: false, error: 'Student has no linked user account' });
+      targetUserId = s.rows[0].user_id;
+      targetRoleId = null;
+    }
     const { rows } = await query(
       `INSERT INTO notifications (user_id, role_id, title, message, type, created_by)
        VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [user_id || null, role_id || null, title, message, type, req.user.id]);
+      [targetUserId, targetRoleId, title, message, type, req.user.id]);
     return res.status(201).json({ success: true, data: rows[0] });
   } catch (err) { return next(err); }
 });

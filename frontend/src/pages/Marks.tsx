@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  examsApi, marksApi, Exam, RosterRow, normalizeExam, normalizeRosterRow,
+  examsApi, marksApi, subjectsApi, Exam, RosterRow, normalizeExam, normalizeRosterRow,
   apiErrorMessage,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -23,8 +23,15 @@ const STATUS_LABEL: Record<RosterRow['status'], string> = {
 
 export default function Marks() {
   const { examId } = useParams<{ examId: string }>();
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const canApprove = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  // Lecturers may only enter marks for their own subjects — the backend
+  // enforces this on POST /marks/bulk (lecturerOwnsSubject, 403 otherwise)
+  // but GET /marks/roster is unscoped, so filter the subject picker here
+  // to the lecturer's assigned subjects so they never pick another
+  // lecturer's subject. null = not a lecturer, or not loaded yet.
+  const isLecturer = hasRole('LECTURER');
+  const [mySubjectIds, setMySubjectIds] = useState<Set<number> | null>(null);
   const [exams, setExams] = useState<Exam[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>(examId ?? '');
   const [schedules, setSchedules] = useState<ScheduleOption[]>([]);
@@ -47,6 +54,15 @@ export default function Marks() {
       ),
       () => setError('Could not load the exam list.'),
     );
+    if (isLecturer && user?.lecturerId) {
+      subjectsApi.list({ lecturer_id: Number(user.lecturerId), limit: 500 }).then(
+        ({ data }) => setMySubjectIds(new Set(
+          (data.data as unknown as Array<{ id: number }>).map((s) => Number(s.id)),
+        )),
+        () => setMySubjectIds(new Set()),
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Subjects scheduled for the selected exam (GET /api/exams/:id).
@@ -61,13 +77,13 @@ export default function Marks() {
           subjectCode: String(s.subject_code ?? ''),
           subjectTitle: String(s.subject_title ?? ''),
           examDate: String(s.exam_date ?? '').slice(0, 10),
-        }));
+        })).filter((s) => !isLecturer || !mySubjectIds || mySubjectIds.has(Number(s.subjectId)));
         setSchedules(list);
         setSelectedSubjectId(list.length === 1 ? list[0].subjectId : '');
       },
       () => setError('Could not load the exam timetable.'),
     );
-  }, [selectedExamId]);
+  }, [selectedExamId, mySubjectIds]);
 
   const loadRoster = async (eId: string, sId: string) => {
     setLoading(true);
@@ -237,6 +253,9 @@ export default function Marks() {
       </div>
 
       {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
+      {isLecturer && selectedExamId && schedules.length === 0 && !error && (
+        <p className="text-sm text-slate-500">None of your assigned subjects are scheduled in this examination.</p>
+      )}
       {notice && <div role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>}
 
       {selectedExam && selectedSchedule && (

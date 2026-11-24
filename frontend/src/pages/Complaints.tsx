@@ -28,6 +28,13 @@ export default function Complaints() {
   const { user, hasRole } = useAuth();
   const isStudent = hasRole('STUDENT');
   const isStaff = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  // Lecturers can open this page (route + sidebar) but there is no
+  // lecturer complaint endpoint on the backend: the review queue
+  // (GET /results/complaints/list) is exam_officer / super_admin only and
+  // GET /students/:id/complaints is student / staff only, so calling either
+  // would 403. Lecturers therefore see an explanatory note, not an empty
+  // queue or an error; a lecturer review queue needs a backend change.
+  const isLecturer = hasRole('LECTURER');
   const [complaints, setComplaints] = useState<ComplaintRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,6 +168,12 @@ export default function Complaints() {
       {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {notice && <div role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>}
 
+      {isLecturer && (
+        <div role="status" className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:bg-blue-900/30 dark:text-blue-200">
+          Lecturer view: complaints about your subjects (for example rechecking requests on marks you entered) are reviewed by the Examination Office — there is no lecturer review queue yet, so no complaints are listed here.
+        </div>
+      )}
+
       {isStudent && (
         <form onSubmit={fileComplaint} className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
           <h2 className="text-lg font-bold">File a complaint</h2>
@@ -227,7 +240,7 @@ export default function Complaints() {
         columns={columns}
         data={complaints}
         loading={loading}
-        emptyMessage={isStudent ? 'You have not filed any complaints yet.' : 'No complaints found.'}
+        emptyMessage={isLecturer ? 'No complaints are shown for lecturers yet — see the note above.' : isStudent ? 'You have not filed any complaints yet.' : 'No complaints found.'}
         searchableKeys={[(r) => r.description, (r) => r.student_name ?? '', (r) => r.subject_code ?? '']}
         actions={isStaff ? (row) => (
           <span className="flex flex-col gap-1">

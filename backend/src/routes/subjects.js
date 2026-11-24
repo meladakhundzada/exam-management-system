@@ -10,6 +10,7 @@ const { query } = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, pagination, paginatedResponse } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
+const { getLecturerScope } = require('../utils/lecturerScope');
 
 const router = express.Router();
 router.use(authenticate);
@@ -33,6 +34,13 @@ router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (r
     if (search) { params.push(`%${search}%`); where.push(`(sub.code ILIKE $${params.length} OR sub.title ILIKE $${params.length})`); }
     if (department_id) { params.push(department_id); where.push(`sub.department_id = $${params.length}`); }
     if (lecturer_id) { params.push(lecturer_id); where.push(`sub.lecturer_id = $${params.length}`); }
+    // Lecturers already had access here but saw every subject; restrict
+    // them to their assigned subjects only. No linked row → empty list.
+    if (req.user.role === 'lecturer') {
+      const scope = await getLecturerScope(req.user.id);
+      if (!scope) return res.json(paginatedResponse([], 0, { page, limit }));
+      params.push(scope.lecturerId); where.push(`sub.lecturer_id = $${params.length}`);
+    }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await query(`SELECT count(*)::int AS n FROM subjects sub ${clause}`, params);
     const { rows } = await query(
@@ -49,6 +57,12 @@ router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer'),
     try {
       const { rows } = await query(`${SELECT_JOINED} WHERE sub.id = $1`, [req.params.id]);
       if (!rows[0]) return res.status(404).json({ success: false, error: 'Subject not found' });
+      if (req.user.role === 'lecturer') {
+        const scope = await getLecturerScope(req.user.id);
+        if (!scope || rows[0].lecturer_id !== scope.lecturerId) {
+          return res.status(403).json({ success: false, error: 'Subject is not assigned to you' });
+        }
+      }
       return res.json({ success: true, data: rows[0] });
     } catch (err) { return next(err); }
   });

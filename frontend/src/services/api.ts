@@ -831,7 +831,7 @@ export const reportsApi = {
   resultPdf: (studentId: number) =>
     api.get(`/reports/student/${studentId}/result-pdf`, { responseType: 'blob' }),
   notifications: () => api.get<ApiResponse<NotificationItem[]>>('/reports/notifications'),
-  createNotification: (payload: { title: string; message: string; type?: NotificationItem['type'] }) =>
+  createNotification: (payload: { title: string; message: string; type?: NotificationItem['type']; user_id?: number; role_id?: number; student_id?: number }) =>
     api.post<ApiResponse<NotificationItem>>('/reports/notifications', payload),
   auditLogs: (page = 1, limit = 50) =>
     api.get<ApiResponse<AuditLogItem[]>>(`/reports/audit-logs?page=${page}&limit=${limit}`),

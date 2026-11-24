@@ -13,7 +13,14 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, hasRole } = useAuth();
+  // GET /api/dashboard/stats is role-scoped on the backend: a lecturer's
+  // counts cover only their own subjects (students enrolled in them,
+  // their subjects/departments, exams with their subjects, their marks),
+  // with Total Lecturers = 1 for themselves. The card labels below say so
+  // for lecturers instead of implying system-wide totals. Activity is
+  // already own-only for non-admins (backend privacy rule).
+  const isLecturer = hasRole('LECTURER');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,18 +54,18 @@ export default function Dashboard() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Welcome back, {user?.fullName}</h1>
-        <p className="text-sm text-slate-500">Overview of examinations, results and pending work.</p>
+        <p className="text-sm text-slate-500">{isLecturer ? 'Overview of your subjects, examinations and pending marks.' : 'Overview of examinations, results and pending work.'}</p>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard title="Total Students" value={stats.totalStudents} icon="🎓" accent="blue" subtitle="Active enrolments" />
-        <StatCard title="Total Lecturers" value={stats.totalLecturers} icon="👩‍🏫" accent="violet" subtitle="Across all departments" />
-        <StatCard title="Total Departments" value={stats.totalDepartments} icon="🏛️" accent="green" subtitle="Faculties & departments" />
-        <StatCard title="Total Subjects" value={stats.totalSubjects} icon="📚" accent="amber" subtitle="Current semester" />
-        <StatCard title="Upcoming Exams" value={stats.upcomingExams} icon="🗓️" accent="blue" subtitle="Scheduled, not yet held" />
-        <StatCard title="Completed Exams" value={stats.completedExams} icon="✅" accent="green" subtitle="This academic year" />
-        <StatCard title="Published Results" value={stats.publishedResults} icon="📊" accent="violet" subtitle="Visible to students" />
-        <StatCard title="Pending Marks" value={stats.pendingMarks} icon="⏳" accent="red" subtitle="Awaiting lecturer submission" trend={{ label: 'Action needed', positive: false }} />
+        <StatCard title={isLecturer ? 'My Students' : 'Total Students'} value={stats.totalStudents} icon="🎓" accent="blue" subtitle={isLecturer ? 'Enrolled in your subjects' : 'Active enrolments'} />
+        <StatCard title="Total Lecturers" value={stats.totalLecturers} icon="👩‍🏫" accent="violet" subtitle={isLecturer ? 'You' : 'Across all departments'} />
+        <StatCard title="Total Departments" value={stats.totalDepartments} icon="🏛️" accent="green" subtitle={isLecturer ? 'Your departments' : 'Faculties & departments'} />
+        <StatCard title="Total Subjects" value={stats.totalSubjects} icon="📚" accent="amber" subtitle={isLecturer ? 'Assigned to you' : 'Current semester'} />
+        <StatCard title="Upcoming Exams" value={stats.upcomingExams} icon="🗓️" accent="blue" subtitle={isLecturer ? 'In your subjects' : 'Scheduled, not yet held'} />
+        <StatCard title="Completed Exams" value={stats.completedExams} icon="✅" accent="green" subtitle={isLecturer ? 'In your subjects' : 'This academic year'} />
+        <StatCard title="Published Results" value={stats.publishedResults} icon="📊" accent="violet" subtitle={isLecturer ? 'In your subjects' : 'Visible to students'} />
+        <StatCard title="Pending Marks" value={stats.pendingMarks} icon="⏳" accent="red" subtitle={isLecturer ? 'Your marks awaiting submission' : 'Awaiting lecturer submission'} trend={{ label: 'Action needed', positive: false }} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

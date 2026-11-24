@@ -29,9 +29,12 @@ const emptyForm: FormState = {
 };
 
 export default function Subjects() {
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const canManage = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
   const canDelete = hasRole('SUPER_ADMIN');
+  // Lecturers see only their own assigned subjects, read-only.
+  const isLecturer = hasRole('LECTURER');
+  const myLecturerId = user?.lecturerId ? Number(user.lecturerId) : null;
   const [subjects, setSubjects] = useState<SubjectRow[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [semesters, setSemesters] = useState<Array<{ id: number; name: string; semester_number: number }>>([]);
@@ -49,8 +52,25 @@ export default function Subjects() {
   const load = async () => {
     setLoading(true);
     try {
-      const { data } = await subjectsApi.list({ limit: 500 });
-      setSubjects((data.data as unknown as Subject[]).map(mapSubject));
+      // The backend does NOT scope GET /api/subjects to the caller — it
+      // returns every subject unless ?lecturer_id= is passed, so pass it
+      // for lecturers and also filter client-side (by lecturer_id, falling
+      // back to lecturer name when the account has no linked lecturer id).
+      const params = isLecturer && myLecturerId
+        ? { limit: 500, lecturer_id: myLecturerId }
+        : { limit: 500 };
+      const { data } = await subjectsApi.list(params);
+      let rows = (data.data as unknown as Subject[]).map(mapSubject);
+      if (isLecturer) {
+        const byId = myLecturerId !== null ? rows.filter((r) => r.lecturer_id === myLecturerId) : [];
+        const byName = user?.fullName ? rows.filter((r) => r.lecturer_name === user.fullName) : [];
+        const mine = byId.length > 0 ? byId : byName;
+        // Only narrow the list when the link resolves; if neither the id
+        // nor the name matches anything, keep the server-filtered list
+        // rather than showing an empty page because of a missing link.
+        if (mine.length > 0) rows = mine;
+      }
+      setSubjects(rows);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -173,7 +193,7 @@ export default function Subjects() {
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold">Subjects &amp; Courses</h1>
-          <p className="text-sm text-slate-500">Manage subjects by department. Lecturers see this list read-only.</p>
+          <p className="text-sm text-slate-500">{isLecturer ? 'Your assigned subjects (read-only).' : 'Manage subjects by department. Lecturers see this list read-only.'}</p>
         </div>
         {canManage && (
           <button onClick={openCreate} className="ml-auto rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-700">+ Add Subject</button>
@@ -187,7 +207,7 @@ export default function Subjects() {
         columns={columns}
         data={subjects}
         loading={loading}
-        emptyMessage="No subjects yet — create the first one with + Add Subject above."
+        emptyMessage={isLecturer ? 'No subjects assigned to you yet.' : 'No subjects yet — create the first one with + Add Subject above.'}
         searchableKeys={[(r) => r.code, (r) => r.title, (r) => r.department_name ?? '']}
         filters={[
           { label: 'Active', value: 'active', test: (r) => r.is_active !== false },

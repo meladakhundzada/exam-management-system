@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { examsApi, reportsApi, studentsApi, apiErrorMessage, downloadBlob } from '../services/api';
+import { examsApi, reportsApi, studentsApi, subjectsApi, apiErrorMessage, downloadBlob } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 // The backend returns snake_case examination rows (title, exam_type,
@@ -44,7 +44,10 @@ export default function Timetable() {
   const [notice, setNotice] = useState<string | null>(null);
   // Students see only their own class timetable: schedules are filtered
   // to their enrolled subjects (loaded once from their enrolments).
+  // Lecturers likewise see only their own assigned subjects.
   const [enrolledSubjectIds, setEnrolledSubjectIds] = useState<Set<number> | null>(null);
+  const isLecturer = hasRole('LECTURER');
+  const [mySubjectIds, setMySubjectIds] = useState<Set<number> | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -65,6 +68,13 @@ export default function Timetable() {
           new Set((data.data as unknown as Array<{ subject_id: number }>).map((e) => Number(e.subject_id))),
         ))
         .catch(() => setEnrolledSubjectIds(new Set()));
+    }
+    if (isLecturer && user?.lecturerId) {
+      subjectsApi.list({ lecturer_id: Number(user.lecturerId), limit: 500 })
+        .then(({ data }) => setMySubjectIds(
+          new Set((data.data as unknown as Array<{ id: number }>).map((s) => Number(s.id))),
+        ))
+        .catch(() => setMySubjectIds(new Set()));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,7 +107,8 @@ export default function Timetable() {
   };
 
   const schedules = (exam?.schedules ?? []).filter(
-    (s) => !isStudent || !enrolledSubjectIds || enrolledSubjectIds.has(Number(s.subject_id)),
+    (s) => (!isStudent || !enrolledSubjectIds || enrolledSubjectIds.has(Number(s.subject_id)))
+      && (!isLecturer || !mySubjectIds || mySubjectIds.has(Number(s.subject_id))),
   );
 
   return (
@@ -154,7 +165,9 @@ export default function Timetable() {
             <p className="px-4 py-10 text-center text-sm text-slate-500">
               {isStudent
                 ? 'None of your enrolled subjects are scheduled in this examination yet.'
-                : 'No subjects scheduled for this examination yet — add schedules on the Examinations page.'}
+                : isLecturer
+                  ? 'None of your assigned subjects are scheduled in this examination yet.'
+                  : 'No subjects scheduled for this examination yet — add schedules on the Examinations page.'}
             </p>
           ) : (
             <table className="w-full min-w-[640px] text-left text-sm">

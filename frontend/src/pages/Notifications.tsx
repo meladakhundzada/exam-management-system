@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import DataTable, { Column } from '../components/DataTable';
 import {
-  reportsApi, NotificationItem, apiErrorMessage,
+  reportsApi, studentsApi, NotificationItem, apiErrorMessage,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -27,12 +27,15 @@ type NotificationRow = Omit<NotificationItem, 'id'> & { id: string };
 
 export default function Notifications() {
   const { hasRole } = useAuth();
-  const canCreate = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  const isLecturer = hasRole('LECTURER');
+  const canCreate = hasRole('SUPER_ADMIN', 'EXAM_OFFICER') || isLecturer;
   const [items, setItems] = useState<NotificationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState({ title: '', message: '', type: 'announcement' as NotificationItem['type'] });
+  const [studentId, setStudentId] = useState('');
+  const [students, setStudents] = useState<Array<{ id: number; full_name: string; student_id: string }>>([]);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -51,21 +54,45 @@ export default function Notifications() {
 
   useEffect(() => { load(); }, []);
 
+  // Lecturers message one of their own students (the student list is
+  // already scoped to the lecturer's students on the backend).
+  useEffect(() => {
+    if (!isLecturer) return;
+    studentsApi.list({ limit: 500 })
+      .then(({ data }) => setStudents(data.data as unknown as Array<{ id: number; full_name: string; student_id: string }>))
+      .catch(() => setStudents([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLecturer]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (form.title.trim().length < 2) { setFormError('Title is required.'); return; }
     if (form.message.trim().length < 2) { setFormError('Message is required.'); return; }
+    if (isLecturer && !studentId) { setFormError('Choose one of your students to message.'); return; }
     setSaving(true);
     try {
-      // Broadcast: no user_id / role_id — the backend returns it to
-      // every authenticated user (see GET /api/reports/notifications).
-      await reportsApi.createNotification({
-        title: form.title.trim(),
-        message: form.message.trim(),
-        type: form.type,
-      });
-      setNotice(`Notification "${form.title.trim()}" sent to everyone.`);
+      if (isLecturer) {
+        // One-to-one message to an assigned student (backend checks scope).
+        await reportsApi.createNotification({
+          title: form.title.trim(),
+          message: form.message.trim(),
+          type: form.type,
+          student_id: Number(studentId),
+        });
+        const target = students.find((s) => String(s.id) === studentId);
+        setNotice(`Message sent to ${target ? `${target.full_name} (${target.student_id})` : 'the student'}.`);
+      } else {
+        // Broadcast: no user_id / role_id — the backend returns it to
+        // every authenticated user (see GET /api/reports/notifications).
+        await reportsApi.createNotification({
+          title: form.title.trim(),
+          message: form.message.trim(),
+          type: form.type,
+        });
+        setNotice(`Notification "${form.title.trim()}" sent to everyone.`);
+      }
       setForm({ title: '', message: '', type: 'announcement' });
+      setStudentId('');
       setFormError(null);
       await load();
     } catch (err) {
@@ -93,7 +120,7 @@ export default function Notifications() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">Notifications &amp; Announcements</h1>
-        <p className="text-sm text-slate-500">Notifications addressed to you, your role, or everyone. Staff can send a broadcast announcement below.</p>
+        <p className="text-sm text-slate-500">Notifications addressed to you, your role, or everyone. Staff can send a broadcast announcement below; lecturers can message one of their own students.</p>
       </div>
 
       {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
@@ -101,7 +128,7 @@ export default function Notifications() {
 
       {canCreate && (
         <form onSubmit={submit} className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
-          <h2 className="text-lg font-bold">Send an announcement</h2>
+          <h2 className="text-lg font-bold">{isLecturer ? 'Message a student' : 'Send an announcement'}</h2>
           {formError && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
             <label className="text-sm font-medium">Title
@@ -112,14 +139,23 @@ export default function Notifications() {
                 {(Object.keys(TYPE_LABELS) as NotificationItem['type'][]).map((t) => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
               </select>
             </label>
-            <p className="self-end text-xs text-slate-500">Audience: everyone (broadcast). Per-user / per-role targeting is not offered in this form.</p>
+            {isLecturer ? (
+              <label className="text-sm font-medium">To student
+                <select required value={studentId} onChange={(e) => setStudentId(e.target.value)} className={inputCls}>
+                  <option value="">Choose one of your students…</option>
+                  {students.map((s) => <option key={s.id} value={s.id}>{s.full_name} ({s.student_id})</option>)}
+                </select>
+              </label>
+            ) : (
+              <p className="self-end text-xs text-slate-500">Audience: everyone (broadcast). Per-user / per-role targeting is not offered in this form.</p>
+            )}
             <label className="text-sm font-medium sm:col-span-3">Message
               <textarea required rows={3} value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} placeholder="Write the announcement…" className={inputCls} />
             </label>
           </div>
           <div className="mt-4 flex justify-end">
             <button type="submit" disabled={saving} className="rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
-              {saving ? 'Sending…' : 'Send to everyone'}
+              {saving ? 'Sending…' : isLecturer ? 'Send to student' : 'Send to everyone'}
             </button>
           </div>
         </form>

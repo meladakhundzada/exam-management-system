@@ -3,10 +3,20 @@ import {
   reportsApi, examsApi, departmentsApi, ReportDashboard,
   apiErrorMessage, downloadBlob,
 } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const inputCls = 'mt-1 w-full rounded-lg border px-3 py-2 dark:border-slate-600 dark:bg-slate-900';
 
 export default function Reports() {
+  const { hasRole } = useAuth();
+  // Lecturers can open this page: GET /api/reports/dashboard, GET /exams
+  // and GET /departments all allow any authenticated role, so the counts
+  // load without a 403. The counts are scoped to the lecturer's own
+  // courses on the backend (GET /api/reports/dashboard). The student-list
+  // export stays STAFF-only and is hidden here; the schedule and published
+  // results exports are open to lecturers for their own subjects' exams,
+  // and the admit-card / individual result-sheet PDFs stay available.
+  const isLecturer = hasRole('LECTURER');
   const [stats, setStats] = useState<ReportDashboard | null>(null);
   const [exams, setExams] = useState<Array<{ id: number; title: string }>>([]);
   const [departments, setDepartments] = useState<Array<{ id: number; name: string }>>([]);
@@ -74,7 +84,7 @@ export default function Reports() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">Reports &amp; Statistics</h1>
-        <p className="text-sm text-slate-500">Live counts from the database, plus Excel / PDF exports.</p>
+        <p className="text-sm text-slate-500">Live counts from the database, plus Excel / PDF exports.{isLecturer ? ' Counts and exports below cover your courses only.' : ''}</p>
       </div>
 
       {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
@@ -128,6 +138,7 @@ export default function Reports() {
 
       <h2 className="pt-2 text-lg font-bold">Exports</h2>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {!isLecturer && (
         <div className="space-y-3 rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
           <h3 className="font-bold">Student list</h3>
           <label className="text-sm font-medium">Department (optional)
@@ -141,6 +152,7 @@ export default function Reports() {
             <button disabled={busy !== null} onClick={() => runExport('students-pdf', () => reportsApi.studentsExport('pdf', studentDept ? Number(studentDept) : undefined), 'students.pdf')} className="rounded-lg border px-3 py-2 text-sm disabled:opacity-50">PDF</button>
           </div>
         </div>
+        )}
 
         <div className="space-y-3 rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
           <h3 className="font-bold">Examination schedule</h3>

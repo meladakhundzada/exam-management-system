@@ -28,7 +28,7 @@ export const ROLE_ROUTES: Record<Role, string[]> = {
     '/complaints', '/reports', '/notifications',
   ],
   FINANCE: ['/dashboard', '/fees', '/reports'],
-  LECTURER: ['/dashboard', '/subjects', '/exams', '/timetable', '/marks', '/results'],
+  LECTURER: ['/dashboard', '/students', '/subjects', '/exams', '/timetable', '/attendance', '/marks', '/results', '/reports', '/complaints', '/notifications', '/settings'],
   STUDENT: ['/dashboard', '/profile', '/my-courses', '/my-attendance', '/timetable', '/results', '/fees', '/admit-card', '/complaints', '/settings'],
 };
 

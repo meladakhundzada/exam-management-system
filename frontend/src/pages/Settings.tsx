@@ -11,7 +11,9 @@ type GradeRow = Omit<GradeScale, 'id'> & { id: string };
 
 export default function Settings() {
   // Grade scale and backup are Super Admin only; every other role that
-  // can open this page (students) sees only the Change password section.
+  // can open this page (students and lecturers) sees only the Change
+  // password section. Change password (POST /auth/change-password) allows
+  // any authenticated role, so lecturers can use this page without a 403.
   const { hasRole } = useAuth();
   const isAdmin = hasRole('SUPER_ADMIN');
   // Change password.

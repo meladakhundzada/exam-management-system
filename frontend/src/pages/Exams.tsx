@@ -24,6 +24,13 @@ export default function Exams() {
   const { hasRole } = useAuth();
   const canManage = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
   const canDelete = hasRole('SUPER_ADMIN');
+  // Lecturers can create examinations for their own subjects (the form
+  // offers the quiz type among others). Edit stays staff-only.
+  // NOTE: the backend still restricts POST /api/exams to super_admin /
+  // exam_officer (MANAGE in backend/src/routes/exams.js), so a lecturer
+  // submit currently 403s until the backend allows lecturers to create —
+  // the form is reachable here, but creation is blocked server-side.
+  const canCreateExam = canManage || hasRole('LECTURER');
   const [exams, setExams] = useState<Exam[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -182,9 +189,9 @@ export default function Exams() {
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold">Examinations</h1>
-          <p className="text-sm text-slate-500">Create exams for an academic year and semester. Subjects, rooms and times are scheduled per exam afterwards.</p>
+          <p className="text-sm text-slate-500">Create exams for an academic year and semester. Subjects, rooms and times are scheduled per exam afterwards.{hasRole('LECTURER') ? ' Lecturers create exams (including quizzes) for their own subjects.' : ''}</p>
         </div>
-        {canManage && (
+        {canCreateExam && (
           <button onClick={openCreate} className="ml-auto rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-700">
             + Create Exam
           </button>

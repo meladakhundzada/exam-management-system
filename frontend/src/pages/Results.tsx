@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  resultsApi, examsApi, studentsApi, ResultRow, Exam,
+  resultsApi, examsApi, studentsApi, subjectsApi, ResultRow, Exam,
   normalizeResultRow, normalizeExam, gpaFromRows,
   apiErrorMessage, downloadBlob,
 } from '../services/api';
@@ -16,6 +16,12 @@ export default function Results() {
   const { user, hasRole } = useAuth();
   const isStudent = hasRole('STUDENT');
   const isStaff = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  // Lecturers look results up per student (GET /api/results/student/:id
+  // allows any authenticated role except a student viewing someone else),
+  // but only their own subjects are shown: the backend list endpoint has
+  // no lecturer scoping, so filter the returned rows client-side.
+  const isLecturer = hasRole('LECTURER');
+  const [mySubjectCodes, setMySubjectCodes] = useState<Set<string> | null>(null);
   // Students see only their own results; staff enter a student number
   // (STU-2026-001) or an internal id to inspect.
   const [studentInput, setStudentInput] = useState(user?.studentId ?? '');
@@ -40,7 +46,16 @@ export default function Results() {
         () => undefined,
       );
     }
-  }, [isStaff]);
+    if (isLecturer && user?.lecturerId) {
+      subjectsApi.list({ lecturer_id: Number(user.lecturerId), limit: 500 }).then(
+        ({ data }) => setMySubjectCodes(new Set(
+          (data.data as unknown as Array<{ code: string }>).map((s) => String(s.code)),
+        )),
+        () => setMySubjectCodes(new Set()),
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStaff, isLecturer, user?.lecturerId]);
 
   // Resolve what the user typed to the internal students.id:
   // - a bare number is already the internal id;
@@ -139,12 +154,20 @@ export default function Results() {
     }
   };
 
+  // Lecturers see only rows for their own subjects (CGPA stays the
+  // student's overall CGPA, as returned by the API).
+  const visibleResults = isLecturer && mySubjectCodes
+    ? results.filter((r) => mySubjectCodes.has(r.subjectCode))
+    : results;
+  const visibleGpa = isLecturer ? gpaFromRows(visibleResults) : gpa;
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">Results</h1>
         <p className="text-sm text-slate-500">
           Only published results are visible here. Unpublished results are never returned by the API to students.
+          {isLecturer ? ' Lecturers see results for their own subjects only.' : ''}
         </p>
       </div>
 
@@ -196,11 +219,11 @@ export default function Results() {
       {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {notice && <div role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>}
 
-      {(gpa !== null || cgpa !== null) && (
+      {(visibleGpa !== null || cgpa !== null) && (
         <div className="grid grid-cols-2 gap-4 sm:max-w-md">
           <div className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
             <p className="text-sm text-slate-500">GPA (results shown)</p>
-            <p className="text-3xl font-bold">{gpa !== null ? gpa.toFixed(2) : '—'}</p>
+            <p className="text-3xl font-bold">{visibleGpa !== null ? visibleGpa.toFixed(2) : '—'}</p>
           </div>
           <div className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
             <p className="text-sm text-slate-500">CGPA</p>
@@ -209,14 +232,14 @@ export default function Results() {
         </div>
       )}
 
-      {results.length > 0 && (
+      {visibleResults.length > 0 && (
         <div className="overflow-x-auto rounded-xl bg-white shadow-card dark:bg-slate-800">
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-900">
               <tr><th className="px-4 py-3">Subject</th><th className="px-4 py-3">Marks</th><th className="px-4 py-3">Grade</th><th className="px-4 py-3">Grade Point</th><th className="px-4 py-3">Status</th></tr>
             </thead>
             <tbody>
-              {results.map((r) => (
+              {visibleResults.map((r) => (
                 <tr key={`${r.studentId}-${r.subjectCode}-${r.examTitle ?? ''}`} className="border-t">
                   <td className="px-4 py-3">{r.subjectCode} — {r.subjectName}<br /><span className="text-xs text-slate-500">{r.studentName} ({r.studentNo}){r.examTitle ? ` · ${r.examTitle}` : ''}</span></td>
                   <td className="px-4 py-3">{r.marksObtained} / {r.totalMarks}</td>
@@ -238,8 +261,8 @@ export default function Results() {
         </p>
       )}
 
-      {!loading && results.length === 0 && !error && (
-        <p className="text-sm text-slate-500">No published results found for this student yet.</p>
+      {!loading && visibleResults.length === 0 && !error && (
+        <p className="text-sm text-slate-500">{isLecturer ? 'No published results found for this student in your subjects yet.' : 'No published results found for this student yet.'}</p>
       )}
     </div>
   );

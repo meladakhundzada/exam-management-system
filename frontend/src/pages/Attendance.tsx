@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  examsApi, studentsApi, attendanceApi,
+  examsApi, studentsApi, attendanceApi, subjectsApi,
   apiErrorMessage,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,7 @@ interface ExamRow {
 
 interface ScheduleRow {
   id: number;
+  subject_id?: number;
   exam_date: string;
   start_time: string;
   end_time: string;
@@ -51,8 +52,21 @@ interface EditableRow {
 const fmtDate = (d: string) => String(d).slice(0, 10);
 
 export default function Attendance() {
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const canManage = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  // Lecturers read attendance for their own subjects only and may mark
+  // it for those schedules (POST /attendance is open to lecturers with
+  // an ownership check on the backend). null = not a lecturer / not loaded.
+  const isLecturer = hasRole('LECTURER');
+  const [mySubjectIds, setMySubjectIds] = useState<Set<number> | null>(null);
+  const [mySubjectCodes, setMySubjectCodes] = useState<Set<string> | null>(null);
+  // A schedule belongs to the lecturer if its subject_id matches, or —
+  // if the row carries no subject_id — its subject_code matches.
+  const isMySchedule = (s: ScheduleRow) =>
+    !isLecturer || !mySubjectIds
+      || (s.subject_id != null
+        ? mySubjectIds.has(Number(s.subject_id))
+        : (mySubjectCodes?.has(s.subject_code) ?? false));
   const [exams, setExams] = useState<ExamRow[]>([]);
   const [examId, setExamId] = useState('');
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
@@ -89,6 +103,16 @@ export default function Attendance() {
         setLoading(false);
       }
     })();
+    if (isLecturer && user?.lecturerId) {
+      subjectsApi.list({ lecturer_id: Number(user.lecturerId), limit: 500 })
+        .then(({ data }) => {
+          const rows = data.data as unknown as Array<{ id: number; code: string }>;
+          setMySubjectIds(new Set(rows.map((s) => Number(s.id))));
+          setMySubjectCodes(new Set(rows.map((s) => String(s.code))));
+        })
+        .catch(() => { setMySubjectIds(new Set()); setMySubjectCodes(new Set()); });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadExam = async (id: string) => {
@@ -101,7 +125,8 @@ export default function Attendance() {
     try {
       const { data } = await examsApi.get(id);
       const detail = data.data as unknown as { schedules?: ScheduleRow[] };
-      setSchedules(detail.schedules ?? []);
+      const all = detail.schedules ?? [];
+      setSchedules(isLecturer && mySubjectIds ? all.filter(isMySchedule) : all);
       setError(null);
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -172,6 +197,16 @@ export default function Attendance() {
   };
 
   const selectedSchedule = schedules.find((s) => String(s.id) === scheduleId);
+  // Lecturers may mark attendance only for their own subjects' schedules
+  // (and only once their subject list has loaded — the backend re-checks
+  // ownership on save).
+  const canMark = canManage
+    || (isLecturer && mySubjectIds !== null && selectedSchedule != null && isMySchedule(selectedSchedule));
+  // Re-apply the lecturer filter at render time too: the schedule list
+  // may have loaded before the lecturer's subjects finished loading.
+  const visibleSchedules = isLecturer && mySubjectIds
+    ? schedules.filter(isMySchedule)
+    : schedules;
   const present = rows.filter((r) => r.status === 'present').length;
   const absent = rows.filter((r) => r.status === 'absent').length;
   const late = rows.filter((r) => r.status === 'late').length;
@@ -181,7 +216,9 @@ export default function Attendance() {
       <div>
         <h1 className="text-2xl font-bold">Examination Attendance</h1>
         <p className="text-sm text-slate-500">
-          Pick an examination and a scheduled subject, then mark each student present, absent or late.
+          {isLecturer
+            ? 'Mark attendance for your scheduled subjects — present, absent or late.'
+            : 'Pick an examination and a scheduled subject, then mark each student present, absent or late.'}
         </p>
       </div>
 
@@ -202,7 +239,7 @@ export default function Attendance() {
         <label className="text-sm font-medium">Scheduled subject
           <select value={scheduleId} onChange={(e) => loadAttendance(e.target.value)} disabled={!examId} className={`${inputCls} w-72 max-w-full`}>
             <option value="">Choose a scheduled subject…</option>
-            {schedules.map((s) => (
+            {visibleSchedules.map((s) => (
               <option key={s.id} value={s.id}>
                 {fmtDate(s.exam_date)} · {s.subject_code} — {s.subject_title} ({String(s.start_time).slice(0, 5)}–{String(s.end_time).slice(0, 5)})
               </option>
@@ -234,7 +271,7 @@ export default function Attendance() {
             </p>
           </div>
 
-          {canManage && (
+          {canMark && (
             <div className="flex flex-wrap items-end gap-3 rounded-xl bg-white p-4 shadow-card dark:bg-slate-800">
               <label className="text-sm font-medium">Add student
                 <select value={addStudentId} onChange={(e) => setAddStudentId(e.target.value)} className={`${inputCls} w-72 max-w-full`}>
@@ -251,7 +288,9 @@ export default function Attendance() {
 
           {rows.length === 0 && unmatched.length === 0 ? (
             <p className="rounded-xl bg-white p-6 text-center text-sm text-slate-500 shadow-card dark:bg-slate-800">
-              No attendance recorded for this schedule yet — add students above and save.
+              {canMark
+                ? 'No attendance recorded for this schedule yet — add students above and save.'
+                : 'No attendance recorded for this schedule yet.'}
             </p>
           ) : (
             <div className="overflow-x-auto rounded-xl bg-white shadow-card dark:bg-slate-800">
@@ -265,7 +304,7 @@ export default function Attendance() {
                       <td className="px-4 py-3">{r.fullName}</td>
                       <td className="px-4 py-3">{r.studentNo}</td>
                       <td className="px-4 py-3">
-                        {canManage ? (
+                        {canMark ? (
                           <select
                             value={r.status}
                             onChange={(e) => setRows(rows.map((x) => (x.studentId === r.studentId ? { ...x, status: e.target.value as EditableRow['status'] } : x)))}

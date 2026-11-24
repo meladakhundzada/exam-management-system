@@ -11,7 +11,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT'] },
   { to: '/profile', label: 'My Profile', icon: '👤', roles: ['STUDENT'] },
-  { to: '/students', label: 'Students', icon: '🎓', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
+  { to: '/students', label: 'Students', icon: '🎓', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/lecturers', label: 'Lecturers', icon: '👩‍🏫', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/departments', label: 'Departments', icon: '🏛️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/subjects', label: 'Subjects', icon: '📚', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
@@ -19,17 +19,17 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/timetable', label: 'Timetable', icon: '🗓️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
   { to: '/my-courses', label: 'My Courses', icon: '📚', roles: ['STUDENT'] },
   { to: '/my-attendance', label: 'My Attendance', icon: '✅', roles: ['STUDENT'] },
-  { to: '/attendance', label: 'Attendance', icon: '✅', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
+  { to: '/attendance', label: 'Attendance', icon: '✅', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/marks', label: 'Marks Entry', icon: '✏️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/results', label: 'Results', icon: '📊', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
   { to: '/fees', label: 'Fees', icon: '💰', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'STUDENT'] },
   { to: '/admit-card', label: 'Admit Card', icon: '🎫', roles: ['STUDENT'] },
-  { to: '/complaints', label: 'Complaints / Rechecking', icon: '🔍', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'STUDENT'] },
-  { to: '/reports', label: 'Reports', icon: '📄', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE'] },
-  { to: '/notifications', label: 'Notifications', icon: '🔔', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
+  { to: '/complaints', label: 'Complaints / Rechecking', icon: '🔍', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
+  { to: '/reports', label: 'Reports', icon: '📄', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER'] },
+  { to: '/notifications', label: 'Notifications', icon: '🔔', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/users', label: 'User Management', icon: '👥', roles: ['SUPER_ADMIN'] },
   { to: '/audit-logs', label: 'Audit Logs', icon: '🧾', roles: ['SUPER_ADMIN'] },
-  { to: '/settings', label: 'Settings & Backup', icon: '⚙️', roles: ['SUPER_ADMIN', 'STUDENT'] },
+  { to: '/settings', label: 'Settings & Backup', icon: '⚙️', roles: ['SUPER_ADMIN', 'STUDENT', 'LECTURER'] },
 ];
 
 export default function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {

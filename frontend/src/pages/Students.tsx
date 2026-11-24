@@ -85,8 +85,15 @@ const emptyForm = (studentNo: string): FormState => ({
 });
 
 export default function Students() {
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const canManage = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
+  // Lecturers are read-only here (Add / Edit / Delete are canManage-gated
+  // below) and see only students in their own department: GET /api/students
+  // allows lecturers but the backend returns every student with no
+  // per-subject scoping, and there is no enrollments-by-subject endpoint
+  // to scope it exactly (see report). Department is the closest
+  // server-supported scoping available from the frontend.
+  const isLecturer = hasRole('LECTURER');
   const [students, setStudents] = useState<Student[]>([]);
   const [studentsLoaded, setStudentsLoaded] = useState(false);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -109,7 +116,10 @@ export default function Students() {
     setLoading(true);
     try {
       const { data } = await studentsApi.list({ limit: 500 });
-      const rows = (data.data as unknown as StudentRow[]).map(mapStudent);
+      let rows = (data.data as unknown as StudentRow[]).map(mapStudent);
+      if (isLecturer && user?.departmentId) {
+        rows = rows.filter((s) => s.departmentId === user.departmentId);
+      }
       setStudents(rows);
       setStudentsLoaded(true);
       setError(null);
@@ -254,15 +264,23 @@ export default function Students() {
       <div className="flex flex-wrap items-center gap-3">
         <div>
           <h1 className="text-2xl font-bold">Students</h1>
-          <p className="text-sm text-slate-500">Register and manage students. Student numbers are generated automatically and emails must be unique.</p>
+          <p className="text-sm text-slate-500">{isLecturer ? 'Students in your department (read-only). For the students enrolled in one of your subjects, use Marks Entry for that subject.' : 'Register and manage students. Student numbers are generated automatically and emails must be unique.'}</p>
         </div>
         <div className="ml-auto flex gap-2">
-          <button onClick={exportCsv} className="rounded-lg border bg-white px-3 py-2 text-sm dark:bg-slate-800">Export CSV</button>
+          {canManage && (
+            <button onClick={exportCsv} className="rounded-lg border bg-white px-3 py-2 text-sm dark:bg-slate-800">Export CSV</button>
+          )}
           {canManage && (
             <button onClick={openCreate} className="rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-700">+ Add Student</button>
           )}
         </div>
       </div>
+
+      {isLecturer && (
+        <div role="status" className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800 dark:bg-blue-900/30 dark:text-blue-200">
+          Lecturer view: showing students in your department only.
+        </div>
+      )}
 
       {error && <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {notice && <div role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</div>}

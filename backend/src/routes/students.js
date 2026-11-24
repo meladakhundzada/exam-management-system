@@ -10,6 +10,7 @@ const { validate, pagination, paginatedResponse } = require('../middleware/valid
 const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId } = require('../utils/roles');
 const { studentGpa } = require('../utils/gpa');
+const { getLecturerScope, studentInLecturerScope } = require('../utils/lecturerScope');
 
 const router = express.Router();
 router.use(authenticate);
@@ -42,6 +43,16 @@ router.get('/', requireRole('super_admin', 'exam_officer', 'lecturer'), async (r
     if (search) { params.push(`%${search}%`); where.push(`(s.full_name ILIKE $${params.length} OR s.student_id ILIKE $${params.length} OR s.email ILIKE $${params.length})`); }
     if (department_id) { params.push(department_id); where.push(`s.department_id = $${params.length}`); }
     if (status) { params.push(status); where.push(`s.status = $${params.length}`); }
+    // Lecturers see only students in their department or enrolled in one
+    // of their assigned subjects. No linked lecturer row → empty list.
+    if (req.user.role === 'lecturer') {
+      const scope = await getLecturerScope(req.user.id);
+      if (!scope) return res.json(paginatedResponse([], 0, { page, limit }));
+      params.push(scope.lecturerId);
+      where.push(`(s.department_id = (SELECT department_id FROM lecturers WHERE id = $${params.length})
+                   OR EXISTS (SELECT 1 FROM enrollments en WHERE en.student_id = s.id AND en.status = 'enrolled'
+                              AND en.subject_id IN (SELECT id FROM subjects WHERE lecturer_id = $${params.length})))`);
+    }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await query(`SELECT count(*)::int AS n FROM students s ${clause}`, params);
     const { rows } = await query(
@@ -63,6 +74,14 @@ router.get('/:id', requireRole('super_admin', 'exam_officer', 'lecturer', 'stude
            FROM students s JOIN departments d ON d.id = s.department_id
            JOIN faculties f ON f.id = d.faculty_id WHERE s.id = $1`, [req.params.id]);
       if (!rows[0]) return res.status(404).json({ success: false, error: 'Student not found' });
+      // A lecturer may view a single student only when that student is in
+      // scope (own department or enrolled in one of their subjects).
+      if (req.user.role === 'lecturer') {
+        const scope = await getLecturerScope(req.user.id);
+        if (!scope || !(await studentInLecturerScope(scope.lecturerId, rows[0].id))) {
+          return res.status(403).json({ success: false, error: 'Student is not in your department or enrolled in your subjects' });
+        }
+      }
       const cgpa = await studentGpa({ query: (t, p) => query(t, p) }, rows[0].id).catch(() => null);
       return res.json({ success: true, data: { ...rows[0], cgpa } });
     } catch (err) { return next(err); }

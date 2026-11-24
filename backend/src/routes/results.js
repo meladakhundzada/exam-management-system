@@ -7,7 +7,8 @@ const { query, withTransaction } = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, pagination, paginatedResponse } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
-const { getGradeScale, gradeForMarks, studentGpa } = require('../utils/gpa');
+const { getGradeScale, gradeForMarks, studentGpa, calculateGpa } = require('../utils/gpa');
+const { getLecturerScope, lecturerSubjectSql } = require('../utils/lecturerScope');
 
 const router = express.Router();
 router.use(authenticate);
@@ -92,6 +93,14 @@ router.get('/', async (req, res, next) => {
       params.push(s.rows[0]?.id || -1); where.push(`r.student_id = $${params.length}`);
       where.push('r.is_published = TRUE');
     }
+    if (req.user.role === 'lecturer') {
+      // Lecturers see results only for their assigned subjects (published
+      // or not — marks/results for other subjects must never leak).
+      // No linked lecturer row → empty list.
+      const scope = await getLecturerScope(req.user.id);
+      params.push(scope?.lecturerId ?? -1);
+      where.push(lecturerSubjectSql('r.subject_id', params.length));
+    }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await query(
       `SELECT count(*)::int AS n FROM results r JOIN students s ON s.id = r.student_id ${clause}`, params);
@@ -116,15 +125,28 @@ router.get('/student/:studentId', param('studentId').isInt(), validate, async (r
         return res.status(403).json({ success: false, error: 'Students can only view their own results' });
       }
     }
+    // A lecturer sees only the student's results in their own subjects,
+    // and the CGPA is computed over those rows only — the student's
+    // overall CGPA (which covers other lecturers' subjects) must not leak.
+    const lecturerParams = [req.params.studentId];
+    let lecturerClause = '';
+    const isLecturer = req.user.role === 'lecturer';
+    if (isLecturer) {
+      const scope = await getLecturerScope(req.user.id);
+      lecturerParams.push(scope?.lecturerId ?? -1);
+      lecturerClause = ` AND ${lecturerSubjectSql('r.subject_id', lecturerParams.length)}`;
+    }
     const { rows } = await query(
       `SELECT r.*, s.student_id AS student_no, s.full_name AS student_name, sub.code AS subject_code, sub.title AS subject_title, sub.credit_hours,
               e.title AS exam_title, e.exam_type
          FROM results r JOIN students s ON s.id = r.student_id
          JOIN subjects sub ON sub.id = r.subject_id
          JOIN examinations e ON e.id = r.exam_id
-        WHERE r.student_id = $1 AND r.is_published = TRUE ORDER BY e.start_date, sub.code`,
-      [req.params.studentId]);
-    const cgpa = await studentGpa({ query: (t, p) => query(t, p) }, Number(req.params.studentId));
+        WHERE r.student_id = $1 AND r.is_published = TRUE${lecturerClause} ORDER BY e.start_date, sub.code`,
+      lecturerParams);
+    const cgpa = isLecturer
+      ? calculateGpa(rows)
+      : await studentGpa({ query: (t, p) => query(t, p) }, Number(req.params.studentId));
     return res.json({ success: true, data: { results: rows, cgpa, total_subjects: rows.length } });
   } catch (err) { return next(err); }
 });

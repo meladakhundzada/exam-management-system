@@ -9,6 +9,7 @@ const { query } = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, pagination, paginatedResponse } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
+const { getLecturerScope, lecturerSubjectSql, lecturerOwnsSubject: lecturerOwnsSubjectId } = require('../utils/lecturerScope');
 
 const router = express.Router();
 router.use(authenticate);
@@ -36,8 +37,12 @@ router.get('/', async (req, res, next) => {
     if (student_id) { params.push(student_id); where.push(`m.student_id = $${params.length}`); }
     if (status) { params.push(status); where.push(`m.status = $${params.length}`); }
     if (req.user.role === 'lecturer') {
-      const t = await query('SELECT id FROM lecturers WHERE user_id = $1', [req.user.id]);
-      params.push(t.rows[0]?.id || -1); where.push(`m.lecturer_id = $${params.length}`);
+      // Scope by assigned subject, not by marks.lecturer_id: marks entered
+      // by an officer for the lecturer's subject must be visible too, and
+      // marks for other subjects must never be. No linked row → empty list.
+      const scope = await getLecturerScope(req.user.id);
+      params.push(scope?.lecturerId ?? -1);
+      where.push(lecturerSubjectSql('m.subject_id', params.length));
     }
     if (req.user.role === 'student') {
       const s = await query('SELECT id FROM students WHERE user_id = $1', [req.user.id]);
@@ -64,11 +69,19 @@ router.get('/', async (req, res, next) => {
 // GET /api/marks returns nothing, so the page would have nobody to enter
 // marks for. student_pk is the internal students.id (what /bulk needs);
 // student_no is the public STU-… number shown in the UI.
-router.get('/roster', async (req, res, next) => {
+// Staff + the subject's own lecturer only: a lecturer may not pull the
+// roster (names + existing marks) for another lecturer's subject.
+router.get('/roster', requireRole('super_admin', 'exam_officer', 'lecturer'), async (req, res, next) => {
   try {
     const { exam_id, subject_id } = req.query;
     if (!exam_id || !subject_id) {
       return res.status(400).json({ success: false, error: 'exam_id and subject_id query parameters are required' });
+    }
+    if (req.user.role === 'lecturer') {
+      const scope = await getLecturerScope(req.user.id);
+      if (!scope || !(await lecturerOwnsSubjectId(scope.lecturerId, subject_id))) {
+        return res.status(403).json({ success: false, error: 'You can only view rosters for your own subjects' });
+      }
     }
     const { rows } = await query(
       `SELECT s.id AS student_pk, s.student_id AS student_no, s.full_name AS student_name,
@@ -134,6 +147,15 @@ router.post('/bulk', requireRole('super_admin', 'exam_officer', 'lecturer'), lec
 router.post('/:id/submit', requireRole('super_admin', 'exam_officer', 'lecturer'), param('id').isInt(), validate,
   async (req, res, next) => {
     try {
+      // A lecturer may submit only marks for their own subjects; without
+      // this, any lecturer could submit any mark row by id.
+      if (req.user.role === 'lecturer') {
+        const scope = await getLecturerScope(req.user.id);
+        const mark = await query('SELECT subject_id FROM marks WHERE id = $1', [req.params.id]);
+        if (mark.rows[0] && (!scope || !(await lecturerOwnsSubjectId(scope.lecturerId, mark.rows[0].subject_id)))) {
+          return res.status(403).json({ success: false, error: 'You can only submit marks for your own subjects' });
+        }
+      }
       const { rows } = await query(
         `UPDATE marks SET status = 'submitted' WHERE id = $1 AND status = 'draft' RETURNING *`, [req.params.id]);
       if (!rows[0]) return res.status(409).json({ success: false, error: 'Mark not found or not in draft status' });
