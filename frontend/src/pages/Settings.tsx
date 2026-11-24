@@ -4,6 +4,7 @@ import {
   authApi, gradeScalesApi, GradeScale, apiErrorMessage,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import PhotoUploader from '../components/ProfilePhoto';
 
 const inputCls = 'mt-1 w-full rounded-lg border px-3 py-2 dark:border-slate-600 dark:bg-slate-900';
 
@@ -120,6 +121,14 @@ export default function Settings() {
           {isAdmin ? 'Super Admin only.' : 'Change the password of the account you are signed in with.'}
         </p>
       </div>
+
+      <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
+        <h2 className="text-lg font-bold">Profile photo</h2>
+        <p className="text-sm text-slate-500">Your photo is shown in the sidebar and on your profile page.</p>
+        <div className="mt-4">
+          <PhotoUploader />
+        </div>
+      </section>
 
       <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
         <h2 className="text-lg font-bold">Change password</h2>

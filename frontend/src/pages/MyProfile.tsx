@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { studentsApi, apiErrorMessage } from '../services/api';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, ROLE_LABELS } from '../context/AuthContext';
+import PhotoUploader from '../components/ProfilePhoto';
 
 // GET /api/students/:id returns the snake_case student row plus
 // department/faculty names and cgpa (published results only).
@@ -32,6 +33,10 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 export default function MyProfile() {
+  // This page serves every role. Students see their full student record
+  // below; any other role (Super Admin, Exam Officer, Lecturer, Finance)
+  // has no linked student row, so they see their account profile instead.
+  // Both views include the profile-photo uploader.
   const { user } = useAuth();
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,7 +45,8 @@ export default function MyProfile() {
   useEffect(() => {
     (async () => {
       if (!user?.studentId) {
-        setError('No student profile is linked to your account. Contact the Examination Office.');
+        // Not a student: account profile only, nothing to load.
+        setProfile(null);
         setLoading(false);
         return;
       }
@@ -57,10 +63,37 @@ export default function MyProfile() {
   }, [user?.studentId]);
 
   if (loading) return <p className="p-4">Loading profile…</p>;
-  if (error || !profile) {
+  if (error) {
     return (
       <div role="alert" className="rounded-xl bg-red-50 p-6 text-red-700 dark:bg-red-900/30 dark:text-red-300">
-        Could not load your profile: {error ?? 'No data returned.'}
+        Could not load your profile: {error}
+      </div>
+    );
+  }
+
+  // Account profile for non-student roles (or a student whose linked row
+  // could not be found): name, role, email + photo uploader.
+  if (!profile) {
+    if (!user) return null;
+    return (
+      <div className="space-y-4">
+        <div>
+          <h1 className="text-2xl font-bold">My Profile</h1>
+          <p className="text-sm text-slate-500">Your account information.</p>
+        </div>
+        <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
+          <h2 className="font-bold">Profile photo</h2>
+          <div className="mt-4">
+            <PhotoUploader />
+          </div>
+        </section>
+        <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
+          <h2 className="font-bold">{user.fullName}</h2>
+          <div className="mt-4">
+            <Field label="Role" value={ROLE_LABELS[user.role]} />
+            <Field label="Email" value={user.email} />
+          </div>
+        </section>
       </div>
     );
   }
@@ -73,6 +106,13 @@ export default function MyProfile() {
         <h1 className="text-2xl font-bold">My Profile</h1>
         <p className="text-sm text-slate-500">Your personal information as recorded by the Examination Department.</p>
       </div>
+
+      <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
+        <h2 className="font-bold">Profile photo</h2>
+        <div className="mt-4">
+          <PhotoUploader />
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <section className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">

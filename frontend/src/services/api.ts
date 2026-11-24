@@ -117,6 +117,12 @@ export const authApi = {
   // camelCase here used to fail validation with a 400.
   changePassword: (currentPassword: string, newPassword: string) =>
     api.post('/auth/change-password', { current_password: currentPassword, new_password: newPassword }),
+  // Profile photo (PUT/DELETE /auth/photo). The photo is a client-
+  // downscaled JPEG data URL (max 512px, <= 200 KB); the backend stores
+  // it in users.avatar_url and validates type and size.
+  uploadPhoto: (photo: string) =>
+    api.put<ApiResponse<{ avatar_url: string | null }>>('/auth/photo', { photo }),
+  removePhoto: () => api.delete<ApiResponse<{ avatar_url: string | null }>>('/auth/photo'),
   // One-time first Super Admin setup. Works only while no users exist;
   // afterwards the backend returns 403 "Setup already completed: users exist".
   setupFirstAdmin: (fullName: string, email: string, password: string) =>
@@ -131,6 +137,9 @@ export interface AuthUser {
   email: string;
   fullName: string;
   role: 'SUPER_ADMIN' | 'EXAM_OFFICER' | 'LECTURER' | 'STUDENT' | 'FINANCE';
+  // Profile photo: downscaled JPEG data URL from users.avatar_url, or
+  // null when the user has no photo. Returned by login and /auth/me.
+  photoUrl?: string | null;
   departmentId?: string | null;
   studentId?: string | null;
   lecturerId?: string | null;
@@ -622,9 +631,21 @@ export const facultiesApi = {
 };
 
 export const dashboardApi = {
-  stats: () => api.get<ApiResponse<DashboardStats>>('/dashboard/stats'),
+  stats: () => api.get<ApiResponse<DashboardStats | StudentDashboardStats>>('/dashboard/stats'),
   recentActivity: () => api.get<ApiResponse<ActivityItem[]>>('/dashboard/activity?limit=10'),
 };
+
+// Personal dashboard numbers for a student — the backend returns ONLY
+// these fields for students (no system-wide totals of any kind).
+export interface StudentDashboardStats {
+  mySubjects: number;
+  myCgpa: number | null;
+  myUpcomingExams: number;
+  myCompletedExams: number;
+  myPublishedResults: number;
+  myFeesDue: number;
+  myAttendanceRate: number | null;
+}
 
 export interface DashboardStats {
   totalStudents: number;

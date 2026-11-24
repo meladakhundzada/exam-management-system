@@ -118,6 +118,22 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+psql "%DATABASE_URL%" -v ON_ERROR_STOP=1 -f "%~dp0database\migrations\006_finance_modules.sql"
+if errorlevel 1 (
+  echo.
+  echo Finance modules migration failed. Read the error above, then double-click
+  echo run.bat again.
+  pause
+  exit /b 1
+)
+psql "%DATABASE_URL%" -v ON_ERROR_STOP=1 -f "%~dp0database\migrations\007_profile_photos.sql"
+if errorlevel 1 (
+  echo.
+  echo Profile photos migration failed. Read the error above, then double-click
+  echo run.bat again.
+  pause
+  exit /b 1
+)
 
 if not exist "%~dp0backend\node_modules" (
   echo Installing backend packages (first time only, needs internet)...

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   feesApi, referenceApi, formatAfn, apiErrorMessage, downloadBlob,
   FeeType, StudentFee, FeeReport, FeePayment, FeePaymentRecord,
+  API_BASE_URL, tokenStore,
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -21,10 +22,72 @@ const PAYMENT_METHODS = [
 
 const inputCls = 'mt-1 w-full rounded-lg border px-3 py-2 dark:border-slate-600 dark:bg-slate-900';
 
+// --- Refunds (with authorization) -----------------------------------------
+// One row of the GET /api/fees/refunds approval queue: the refund request
+// plus the original payment, student and fee it belongs to.
+interface FeeRefund {
+  id: number;
+  fee_payment_id: number;
+  amount: number;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  requested_by?: number | null;
+  requested_by_name?: string | null;
+  authorized_by?: number | null;
+  authorized_by_name?: string | null;
+  authorized_at?: string | null;
+  refund_payment_id?: number | null;
+  refund_receipt_no?: string | null;
+  original_receipt_no: string;
+  original_amount: number;
+  student_name: string;
+  student_no: string;
+  fee_type_name: string;
+  created_at: string;
+}
+
+const REFUND_STATUS_BADGE: Record<FeeRefund['status'], string> = {
+  pending: 'bg-amber-100 text-amber-700',
+  approved: 'bg-emerald-100 text-emerald-700',
+  rejected: 'bg-red-100 text-red-700',
+};
+
+// Refund calls live here (not in services/api.ts) so this change touches
+// only Fees.tsx: they use the same base URL and token store as the axios
+// client. Move them into feesApi when api.ts is next edited. On failure
+// the backend's { error } message is thrown as an Error, so
+// apiErrorMessage() surfaces it exactly like an axios error.
+async function refundRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(tokenStore.get() ? { Authorization: `Bearer ${tokenStore.get()}` } : {}),
+      ...((init?.headers as Record<string, string> | undefined) ?? {}),
+    },
+  });
+  const body = (await res.json().catch(() => ({}))) as { success?: boolean; error?: string; message?: string; data?: T };
+  if (!res.ok || body.success === false) throw new Error(body.error || body.message || `Request failed (${res.status})`);
+  return body.data as T;
+}
+
+const refundApi = {
+  list: () => refundRequest<FeeRefund[]>('/fees/refunds?limit=100'),
+  request: (paymentId: number, payload: { amount: number; reason: string }) =>
+    refundRequest<FeeRefund>(`/fees/payments/${paymentId}/refund`, { method: 'POST', body: JSON.stringify(payload) }),
+  approve: (id: number) =>
+    refundRequest<{ refund: FeeRefund; reversal: FeePayment }>(`/fees/refunds/${id}/approve`, { method: 'POST' }),
+  reject: (id: number) =>
+    refundRequest<FeeRefund>(`/fees/refunds/${id}/reject`, { method: 'POST' }),
+};
+
 export default function Fees() {
   const { user, hasRole } = useAuth();
   const isStaff = hasRole('SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE');
   const isStudent = hasRole('STUDENT');
+  // Only Super Admin / Exam Officer may approve or reject refunds —
+  // Finance may request one but never authorise it.
+  const canApproveRefunds = hasRole('SUPER_ADMIN', 'EXAM_OFFICER');
 
   const [types, setTypes] = useState<FeeType[]>([]);
   const [due, setDue] = useState<StudentFee[]>([]);
@@ -57,6 +120,10 @@ export default function Fees() {
   const [editingType, setEditingType] = useState<{ id: number; amount: string; description: string } | null>(null);
   // Payment correction.
   const [editingPayment, setEditingPayment] = useState<{ id: number; amount: string; payment_method: string; payment_date: string; note: string } | null>(null);
+  // Refunds (with authorization): approval queue + request form.
+  const [refunds, setRefunds] = useState<FeeRefund[]>([]);
+  const [refundTarget, setRefundTarget] = useState<FeePaymentRecord | null>(null);
+  const [refundForm, setRefundForm] = useState({ amount: '', reason: '' });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -71,6 +138,10 @@ export default function Fees() {
     setDue(d.data.data);
     setReport(r.data.data);
     setPayments(p.data.data);
+    // Refund queue: loaded separately so a missing/unapplied 006 migration
+    // (no fee_refunds table yet) degrades to an empty queue instead of
+    // breaking the whole Fees page.
+    refundApi.list().then(setRefunds).catch(() => setRefunds([]));
   };
 
   const loadStudent = async () => {
@@ -262,6 +333,44 @@ export default function Fees() {
       const res = await feesApi.exportPayments({ search: paySearch || undefined, payment_method: payMethod || undefined });
       downloadBlob(res.data, 'payment-history.csv');
       setNotice('Downloaded payment-history.csv.');
+    } catch (err) { setFormError(apiErrorMessage(err)); } finally { setSaving(false); }
+  };
+
+  // --- Refunds ---------------------------------------------------------------
+  const openRefund = (payment: FeePaymentRecord) => {
+    setRefundTarget(payment);
+    setRefundForm({ amount: String(payment.amount), reason: '' });
+    setFormError(null);
+  };
+
+  const submitRefund = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!refundTarget) return;
+    if (Number(refundForm.amount) <= 0) { setFormError('Refund amount must be greater than 0 AFN.'); return; }
+    if (Number(refundForm.amount) > refundTarget.amount) { setFormError(`Refund cannot exceed the payment amount (${formatAfn(refundTarget.amount)}).`); return; }
+    if (refundForm.reason.trim().length < 3) { setFormError('Give a reason for the refund (at least 3 characters).'); return; }
+    setSaving(true);
+    try {
+      await refundApi.request(refundTarget.id, { amount: Number(refundForm.amount), reason: refundForm.reason.trim() });
+      setNotice(`Refund of ${formatAfn(Number(refundForm.amount))} requested for receipt ${refundTarget.receipt_no}. It needs approval from the Super Admin or Examination Officer — no money has moved yet.`);
+      setRefundTarget(null);
+      setFormError(null);
+      await loadStaff();
+    } catch (err) { setFormError(apiErrorMessage(err)); } finally { setSaving(false); }
+  };
+
+  const decideRefund = async (refund: FeeRefund, approve: boolean) => {
+    setSaving(true);
+    try {
+      if (approve) {
+        const result = await refundApi.approve(refund.id);
+        setNotice(`Refund approved. Reversal receipt ${result.reversal.receipt_no} posted; the student's fee totals were updated.`);
+      } else {
+        await refundApi.reject(refund.id);
+        setNotice('Refund request rejected. No money moved.');
+      }
+      setFormError(null);
+      await loadStaff();
     } catch (err) { setFormError(apiErrorMessage(err)); } finally { setSaving(false); }
   };
 
@@ -550,7 +659,10 @@ export default function Fees() {
                   <td className="px-2 py-3">{p.payment_method}</td>
                   <td className="px-2 py-3 font-semibold">{formatAfn(p.amount)}</td>
                   <td className="px-2 py-3">{p.received_by_name ?? '—'}</td>
-                  <td className="px-2 py-3"><button onClick={() => setEditingPayment({ id: p.id, amount: String(p.amount), payment_method: p.payment_method, payment_date: p.payment_date, note: p.note ?? '' })} className="text-navy-600 hover:underline">Correct</button></td>
+                  <td className="px-2 py-3">
+                    <button onClick={() => setEditingPayment({ id: p.id, amount: String(p.amount), payment_method: p.payment_method, payment_date: p.payment_date, note: p.note ?? '' })} className="text-navy-600 hover:underline">Correct</button>
+                    {p.amount > 0 && <button onClick={() => openRefund(p)} className="ml-3 text-navy-600 hover:underline">Request refund</button>}
+                  </td>
                 </tr>
               ))}
               {!payments.length && <tr><td colSpan={8} className="px-2 py-6 text-center text-slate-500">No payments recorded yet.</td></tr>}
@@ -558,6 +670,67 @@ export default function Fees() {
           </table>
         </div>
       </div>
+
+      {canApproveRefunds && (
+        <div className="rounded-xl bg-white p-5 shadow-card dark:bg-slate-800">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="text-lg font-bold">Refund approvals</h2>
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+              {refunds.filter((r) => r.status === 'pending').length} pending
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-slate-500">Refunds need your approval before any money moves. Approving posts a reversal payment (new receipt) and updates the student&apos;s fee totals; rejecting changes nothing.</p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead><tr className="border-b text-slate-500"><th className="px-2 py-3">Student</th><th className="px-2 py-3">Original payment</th><th className="px-2 py-3">Refund</th><th className="px-2 py-3">Reason</th><th className="px-2 py-3">Requested by</th><th className="px-2 py-3">Status</th><th className="px-2 py-3">Action</th></tr></thead>
+              <tbody>
+                {refunds.map((r) => (
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="px-2 py-3 font-medium">{r.student_name}<span className="block text-xs text-slate-500">{r.student_no} · {r.fee_type_name}</span></td>
+                    <td className="px-2 py-3">{r.original_receipt_no}<span className="block text-xs text-slate-500">{formatAfn(r.original_amount)}</span></td>
+                    <td className="px-2 py-3 font-semibold">{formatAfn(r.amount)}{r.refund_receipt_no && <span className="block text-xs font-normal text-slate-500">Reversal: {r.refund_receipt_no}</span>}</td>
+                    <td className="px-2 py-3">{r.reason}</td>
+                    <td className="px-2 py-3">{r.requested_by_name ?? '—'}<span className="block text-xs text-slate-500">{new Date(r.created_at).toLocaleDateString()}</span></td>
+                    <td className="px-2 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${REFUND_STATUS_BADGE[r.status]}`}>{r.status.toUpperCase()}</span>
+                      {r.authorized_by_name && <span className="block text-xs text-slate-500">by {r.authorized_by_name}</span>}
+                    </td>
+                    <td className="px-2 py-3">
+                      {r.status === 'pending' && (
+                        <span className="flex gap-3">
+                          <button onClick={() => decideRefund(r, true)} disabled={saving} className="font-semibold text-emerald-600 hover:underline disabled:opacity-50">Approve</button>
+                          <button onClick={() => decideRefund(r, false)} disabled={saving} className="font-semibold text-red-600 hover:underline disabled:opacity-50">Reject</button>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!refunds.length && <tr><td colSpan={7} className="px-2 py-6 text-center text-slate-500">No refund requests yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {refundTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Request refund">
+          <form onSubmit={submitRefund} className="w-full max-w-lg rounded-xl bg-white p-6 dark:bg-slate-800">
+            <h2 className="text-lg font-bold">Request refund</h2>
+            <p className="mt-1 text-sm text-slate-500">{refundTarget.student_name} ({refundTarget.student_no}) — {refundTarget.fee_type_name} · receipt {refundTarget.receipt_no} ({formatAfn(refundTarget.amount)}). The refund stays pending until the Super Admin or Examination Officer approves it — no money moves yet.</p>
+            {formError && <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>}
+            <label className="mt-4 block text-sm font-medium">Refund amount (AFN)
+              <input required type="number" min={0.01} step={0.01} max={refundTarget.amount} value={refundForm.amount} onChange={(e) => setRefundForm({ ...refundForm, amount: e.target.value })} className={inputCls} />
+            </label>
+            <label className="mt-3 block text-sm font-medium">Reason
+              <input required value={refundForm.reason} onChange={(e) => setRefundForm({ ...refundForm, reason: e.target.value })} placeholder="e.g. overpayment — student paid twice" className={inputCls} />
+            </label>
+            <div className="mt-6 flex justify-end gap-2">
+              <button type="button" onClick={() => setRefundTarget(null)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+              <button type="submit" disabled={saving} className="rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Request refund'}</button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {editingPayment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Correct payment">

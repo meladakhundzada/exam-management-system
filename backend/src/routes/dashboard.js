@@ -7,6 +7,7 @@
 const express = require('express');
 const { query } = require('../config/db');
 const { authenticate } = require('../middleware/auth');
+const { studentGpa } = require('../utils/gpa');
 
 const router = express.Router();
 router.use(authenticate);
@@ -27,39 +28,68 @@ async function scopedIds(req) {
 // GET /api/dashboard/stats — counts + chart data, role-scoped.
 // Staff see the whole system; lecturers see only their subjects, students
 // only their own enrolments/results (same scoping as marks.js/results.js).
+// Privacy rule: a student must NEVER see system-wide totals — for students
+// this endpoint returns ONLY personal numbers (my subjects, my CGPA, my
+// exams, my results, my outstanding fees, my attendance rate) and no
+// totalStudents / totalLecturers / totalDepartments / global exam counts.
 router.get('/stats', async (req, res, next) => {
   try {
     const ids = await scopedIds(req);
     const isLecturer = ids.lecturerId !== null;
     const isStudent = ids.studentId !== null;
 
-    // Subject set the caller may see: lecturer's own subjects, student's
-    // enrolled subjects, or all subjects for staff.
+    if (isStudent) {
+      const personal = await query(
+        `SELECT (SELECT count(*)::int FROM enrollments
+                  WHERE student_id = $1 AND status = 'enrolled') AS "mySubjects",
+                (SELECT count(*)::int FROM examinations e
+                  WHERE e.status IN ('scheduled', 'ongoing')
+                    AND EXISTS (SELECT 1 FROM exam_schedules es
+                                 JOIN enrollments en ON en.subject_id = es.subject_id
+                                WHERE es.exam_id = e.id AND en.student_id = $1
+                                  AND en.status = 'enrolled')) AS "myUpcomingExams",
+                (SELECT count(*)::int FROM examinations e
+                  WHERE e.status = 'completed'
+                    AND EXISTS (SELECT 1 FROM exam_schedules es
+                                 JOIN enrollments en ON en.subject_id = es.subject_id
+                                WHERE es.exam_id = e.id AND en.student_id = $1
+                                  AND en.status = 'enrolled')) AS "myCompletedExams",
+                (SELECT count(*)::int FROM results
+                  WHERE student_id = $1 AND is_published) AS "myPublishedResults",
+                (SELECT COALESCE(SUM(amount_due - amount_paid), 0)::float FROM student_fees
+                  WHERE student_id = $1 AND status IN ('unpaid', 'partial', 'overdue')) AS "myFeesDue",
+                (SELECT ROUND(100.0 * count(*) FILTER (WHERE status = 'present')
+                         / NULLIF(count(*), 0), 1)::float
+                   FROM attendance WHERE student_id = $1) AS "myAttendanceRate"`,
+        [ids.studentId]);
+      const myCgpa = await studentGpa({ query: (t, p) => query(t, p) }, ids.studentId);
+      return res.json({ success: true, data: { ...personal.rows[0], myCgpa } });
+    }
+
+    // Subject set the caller may see: lecturer's own subjects, or all
+    // subjects for staff. (Students return early above, so no student
+    // branch is needed here.)
     const subjectFilter = isLecturer
       ? `lecturer_id = ${ids.lecturerId}`
-      : isStudent
-        ? `id IN (SELECT subject_id FROM enrollments WHERE student_id = ${ids.studentId} AND status = 'enrolled')`
-        : 'TRUE';
+      : 'TRUE';
     // Exams visible: those with a schedule in a visible subject (all for staff).
-    const examFilterFor = (alias) => (isLecturer || isStudent
+    const examFilterFor = (alias) => (isLecturer
       ? `${alias}id IN (SELECT exam_id FROM exam_schedules WHERE subject_id IN (SELECT id FROM subjects WHERE ${subjectFilter}))`
       : 'TRUE');
     const examFilter = examFilterFor('');
-    const marksFilter = isLecturer ? `lecturer_id = ${ids.lecturerId}` : isStudent ? `student_id = ${ids.studentId}` : 'TRUE';
+    const marksFilter = isLecturer ? `lecturer_id = ${ids.lecturerId}` : 'TRUE';
     const resultsFilter = isLecturer
       ? `subject_id IN (SELECT id FROM subjects WHERE lecturer_id = ${ids.lecturerId})`
-      : isStudent ? `student_id = ${ids.studentId}` : 'TRUE';
+      : 'TRUE';
     const totalStudentsSql = isLecturer
       ? `SELECT count(DISTINCT student_id)::int FROM enrollments WHERE subject_id IN (SELECT id FROM subjects WHERE lecturer_id = ${ids.lecturerId}) AND status = 'enrolled'`
-      : isStudent ? 'SELECT 1' : `SELECT count(*)::int FROM students WHERE status = 'active'`;
+      : `SELECT count(*)::int FROM students WHERE status = 'active'`;
     const totalLecturersSql = isLecturer
       ? 'SELECT 1'
-      : isStudent
-        ? `SELECT count(DISTINCT lecturer_id)::int FROM subjects WHERE id IN (SELECT subject_id FROM enrollments WHERE student_id = ${ids.studentId} AND status = 'enrolled')`
-        : `SELECT count(*)::int FROM lecturers WHERE is_active`;
+      : `SELECT count(*)::int FROM lecturers WHERE is_active`;
     const totalDepartmentsSql = isLecturer
       ? `SELECT count(DISTINCT department_id)::int FROM subjects WHERE lecturer_id = ${ids.lecturerId}`
-      : isStudent ? 'SELECT 1' : 'SELECT count(*)::int FROM departments';
+      : 'SELECT count(*)::int FROM departments';
 
     const counts = await query(
       `SELECT (${totalStudentsSql}) AS "totalStudents",

@@ -13,6 +13,10 @@ const { query, withTransaction } = require('../config/db');
 const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, pagination, paginatedResponse } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
+// Scholarship discount at assign time (see routes/scholarships.js: the
+// same discount is applied retroactively when an award is approved, so a
+// fee is discounted whichever happens first — assignment or approval).
+const { findApprovedAward, calcDiscount } = require('./scholarships');
 
 const router = express.Router();
 router.use(authenticate);
@@ -183,14 +187,25 @@ router.post('/assign', requireRole(...STAFF),
       const type = await query('SELECT * FROM fee_types WHERE id = $1 AND is_active = TRUE', [b.fee_type_id]);
       if (!type.rows[0]) return res.status(404).json({ success: false, error: 'Fee type not found or inactive' });
       const amount = b.amount || Number(type.rows[0].amount);
+      // Approved scholarship for this student + year/semester? Store the
+      // fee net of the discount (amount_due = gross - discount). The
+      // discount is clamped so amount_due stays >= 0.01 (003 CHECK
+      // amount_due > 0); a 100% scholarship leaves a 0.01 AFN balance.
+      async function discounted(studentId, gross) {
+        const award = await findApprovedAward(query, studentId, b.academic_year_id || null, b.semester_id || null);
+        if (!award) return { net: gross, discount: 0, awardId: null };
+        const discount = Math.max(0, Math.min(calcDiscount(gross, award), gross - 0.01));
+        return { net: Math.round((gross - discount) * 100) / 100, discount, awardId: award.id };
+      }
       let created;
       if (b.student_id) {
+        const d = await discounted(b.student_id, amount);
         const { rows } = await query(
-          `INSERT INTO student_fees (student_id, fee_type_id, amount_due, due_date, academic_year_id, semester_id)
-           VALUES ($1,$2,$3,$4,$5,$6)
+          `INSERT INTO student_fees (student_id, fee_type_id, amount_due, discount_amount, student_scholarship_id, due_date, academic_year_id, semester_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
            ON CONFLICT (student_id, fee_type_id, COALESCE(academic_year_id,0), COALESCE(semester_id,0)) DO NOTHING
            RETURNING *`,
-          [b.student_id, b.fee_type_id, amount, b.due_date || null,
+          [b.student_id, b.fee_type_id, d.net, d.discount, d.awardId, b.due_date || null,
            b.academic_year_id || null, b.semester_id || null]);
         created = rows;
         if (!created.length) return res.status(409).json({ success: false, error: 'This fee is already assigned to the student for that year/semester' });
@@ -211,12 +226,13 @@ router.post('/assign', requireRole(...STAFF),
           semesterNumber !== null ? [b.department_id, semesterNumber] : [b.department_id]);
         created = [];
         for (const s of cohort.rows) {
+          const d = await discounted(s.id, amount);
           const { rows } = await query(
-            `INSERT INTO student_fees (student_id, fee_type_id, amount_due, due_date, academic_year_id, semester_id)
-             VALUES ($1,$2,$3,$4,$5,$6)
+            `INSERT INTO student_fees (student_id, fee_type_id, amount_due, discount_amount, student_scholarship_id, due_date, academic_year_id, semester_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
              ON CONFLICT (student_id, fee_type_id, COALESCE(academic_year_id,0), COALESCE(semester_id,0)) DO NOTHING
              RETURNING *`,
-            [s.id, b.fee_type_id, amount, b.due_date || null,
+            [s.id, b.fee_type_id, d.net, d.discount, d.awardId, b.due_date || null,
              b.academic_year_id || null, b.semester_id || null]);
           if (rows[0]) created.push(rows[0]);
         }
@@ -358,6 +374,46 @@ router.get('/export', requireRole(...STAFF), async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+const APPROVERS = ['super_admin', 'exam_officer'];
+
+// GET /api/fees/refunds — refund approval queue (staff only). Pending
+// first, then decided, newest first; each row carries the original
+// payment, student and fee details. Optional ?status=pending|approved|
+// rejected filter.
+// NOTE: this route must stay above GET /api/fees/:id — otherwise the
+// word 'refunds' would match :id and fail its isInt validation.
+router.get('/refunds', requireRole(...STAFF), async (req, res, next) => {
+  try {
+    const { page, limit, offset } = pagination(req);
+    const { status } = req.query;
+    const where = []; const params = [];
+    if (status) { params.push(status); where.push(`fr.status = $${params.length}`); }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const total = await query('SELECT count(*)::int AS n FROM fee_refunds fr ' + clause, params);
+    const { rows } = await query(
+      `SELECT fr.*, fp.receipt_no AS original_receipt_no, fp.amount AS original_amount,
+              fp.student_fee_id, sf.student_id, s.student_id AS student_no,
+              s.full_name AS student_name, ft.name AS fee_type_name,
+              ru.full_name AS requested_by_name, au.full_name AS authorized_by_name,
+              rp.receipt_no AS refund_receipt_no
+         FROM fee_refunds fr
+         JOIN fee_payments fp ON fp.id = fr.fee_payment_id
+         JOIN student_fees sf ON sf.id = fp.student_fee_id
+         JOIN students s ON s.id = sf.student_id
+         JOIN fee_types ft ON ft.id = sf.fee_type_id
+         LEFT JOIN users ru ON ru.id = fr.requested_by
+         LEFT JOIN users au ON au.id = fr.authorized_by
+         LEFT JOIN fee_payments rp ON rp.id = fr.refund_payment_id
+        ${clause}
+        ORDER BY CASE fr.status WHEN 'pending' THEN 0 ELSE 1 END,
+                 fr.created_at DESC, fr.id DESC
+        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]);
+    const data = rows.map((r) => ({ ...r, amount: Number(r.amount), original_amount: Number(r.original_amount) }));
+    return res.json(paginatedResponse(data, total.rows[0].n, { page, limit }));
+  } catch (err) { return next(err); }
+});
+
 // GET /api/fees/:id — one fee with its payments (used for the receipt view).
 router.get('/:id', param('id').isInt({ min: 1 }), validate, async (req, res, next) => {
   try {
@@ -415,6 +471,135 @@ router.post('/:id/pay', requireRole(...STAFF), param('id').isInt({ min: 1 }),
       });
       if (result.status === 201) {
         await logAudit({ userId: req.user.id, action: 'fees.pay', entityType: 'fee_payments', entityId: result.body.data.payment.id, newValues: result.body.data.payment, req });
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) { return next(err); }
+  });
+
+// --- Refunds (with authorization) ---------------------------------------
+// Flow: any staff member (finance included) requests a refund against a
+// payment -> the request sits PENDING and changes no totals -> a Super
+// Admin or Exam Officer approves (posts a negative reversal payment and
+// re-totals the parent fee, all in one transaction) or rejects it (no
+// totals change). Finance may NOT approve — not even their own request.
+// The reversal row is a negative fee_payments row with is_refund = TRUE,
+// allowed only by the relaxed CHECK in migrations/006_refunds.sql; see
+// that file's header for why the check is still safe.
+
+// POST /api/fees/payments/:id/refund — request a refund (staff only).
+// Creates a PENDING fee_refunds row. amount must be <= what is left
+// refundable on the original payment (original amount minus earlier
+// pending/approved refunds for it). Changes no totals yet.
+router.post('/payments/:id/refund', requireRole(...STAFF), param('id').isInt({ min: 1 }),
+  [body('amount').isFloat({ min: 0.01 }),
+   body('reason').trim().isLength({ min: 3, max: 500 })], validate,
+  async (req, res, next) => {
+    try {
+      const paymentId = Number(req.params.id);
+      const amount = Number(req.body.amount);
+      const result = await withTransaction(async (client) => {
+        const pay = await client.query('SELECT * FROM fee_payments WHERE id = $1 FOR UPDATE', [paymentId]);
+        if (!pay.rows[0]) return { status: 404, body: { success: false, error: 'Payment not found' } };
+        if (Number(pay.rows[0].amount) <= 0) {
+          return { status: 400, body: { success: false, error: 'A refund payment cannot itself be refunded' } };
+        }
+        const used = await client.query(
+          `SELECT COALESCE(SUM(amount),0)::float AS used FROM fee_refunds
+            WHERE fee_payment_id = $1 AND status IN ('pending','approved')`, [paymentId]);
+        const remaining = Number(pay.rows[0].amount) - used.rows[0].used;
+        if (amount > remaining) {
+          return { status: 400, body: { success: false, error: `Refund (${amount} AFN) exceeds the refundable balance of this payment (${remaining} AFN)` } };
+        }
+        const { rows } = await client.query(
+          `INSERT INTO fee_refunds (fee_payment_id, amount, reason, requested_by)
+           VALUES ($1,$2,$3,$4) RETURNING *`,
+          [paymentId, amount, req.body.reason.trim(), req.user.id]);
+        return { status: 201, body: { success: true, data: { ...rows[0], amount: Number(rows[0].amount) } } };
+      });
+      if (result.status === 201) {
+        await logAudit({ userId: req.user.id, action: 'fees.refund_request', entityType: 'fee_refunds', entityId: result.body.data.id, newValues: result.body.data, req });
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) { return next(err); }
+  });
+
+// POST /api/fees/refunds/:id/approve — approve a refund (Super Admin or
+// Exam Officer only). In ONE transaction: mark the refund approved with
+// authorized_by/authorized_at, post the negative reversal payment (new
+// receipt REC-YYYY-NNNN from fee_receipt_seq, is_refund = TRUE), and
+// re-total the parent fee's amount_paid and status. Re-checks at
+// approval time that the refund is still pending, still refundable for
+// the payment, and cannot drive amount_paid below 0.
+router.post('/refunds/:id/approve', requireRole(...APPROVERS), param('id').isInt({ min: 1 }), validate,
+  async (req, res, next) => {
+    try {
+      const refundId = Number(req.params.id);
+      const result = await withTransaction(async (client) => {
+        const ref = await client.query('SELECT * FROM fee_refunds WHERE id = $1 FOR UPDATE', [refundId]);
+        if (!ref.rows[0]) return { status: 404, body: { success: false, error: 'Refund request not found' } };
+        if (ref.rows[0].status !== 'pending') {
+          return { status: 409, body: { success: false, error: `Refund request has already been ${ref.rows[0].status}` } };
+        }
+        const refund = ref.rows[0];
+        const pay = await client.query('SELECT * FROM fee_payments WHERE id = $1 FOR UPDATE', [refund.fee_payment_id]);
+        if (!pay.rows[0]) return { status: 404, body: { success: false, error: 'Original payment not found' } };
+        const fee = await client.query('SELECT * FROM student_fees WHERE id = $1 FOR UPDATE', [pay.rows[0].student_fee_id]);
+        if (!fee.rows[0]) return { status: 404, body: { success: false, error: 'Fee not found' } };
+        const approved = await client.query(
+          `SELECT COALESCE(SUM(amount),0)::float AS total FROM fee_refunds
+            WHERE fee_payment_id = $1 AND status = 'approved'`, [refund.fee_payment_id]);
+        if (Number(refund.amount) > Number(pay.rows[0].amount) - approved.rows[0].total) {
+          return { status: 400, body: { success: false, error: 'Refund exceeds the amount still refundable for this payment' } };
+        }
+        const newPaid = Number(fee.rows[0].amount_paid) - Number(refund.amount);
+        if (newPaid < 0) {
+          return { status: 400, body: { success: false, error: `Refund (${Number(refund.amount)} AFN) exceeds the fee's paid total (${Number(fee.rows[0].amount_paid)} AFN)` } };
+        }
+        const receipt = await client.query(
+          `SELECT 'REC-' || to_char(CURRENT_DATE,'YYYY') || '-' || lpad(nextval('fee_receipt_seq')::text, 4, '0') AS receipt_no`);
+        const reversal = await client.query(
+          `INSERT INTO fee_payments (student_fee_id, amount, payment_method, receipt_no, received_by, payment_date, note, is_refund)
+           VALUES ($1,$2,$3,$4,$5,CURRENT_DATE,$6,TRUE) RETURNING *`,
+          [fee.rows[0].id, -Number(refund.amount), pay.rows[0].payment_method,
+           receipt.rows[0].receipt_no, req.user.id,
+           `Refund of ${pay.rows[0].receipt_no}: ${refund.reason}`]);
+        const newStatus = newPaid >= Number(fee.rows[0].amount_due) ? 'paid' : newPaid > 0 ? 'partial' : 'unpaid';
+        await client.query('UPDATE student_fees SET amount_paid = $2, status = $3 WHERE id = $1',
+          [fee.rows[0].id, newPaid, newStatus]);
+        const { rows } = await client.query(
+          `UPDATE fee_refunds SET status = 'approved', authorized_by = $2, authorized_at = now(),
+                  refund_payment_id = $3 WHERE id = $1 RETURNING *`,
+          [refundId, req.user.id, reversal.rows[0].id]);
+        return { status: 200, body: { success: true, data: { refund: { ...rows[0], amount: Number(rows[0].amount) }, reversal: { ...reversal.rows[0], amount: Number(reversal.rows[0].amount) } } } };
+      });
+      if (result.status === 200) {
+        await logAudit({ userId: req.user.id, action: 'fees.refund_approve', entityType: 'fee_refunds', entityId: refundId, newValues: result.body.data, req });
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) { return next(err); }
+  });
+
+// POST /api/fees/refunds/:id/reject — reject a refund (Super Admin or
+// Exam Officer only). Marks it rejected with authorized_by/authorized_at.
+// No payment row, no totals change.
+router.post('/refunds/:id/reject', requireRole(...APPROVERS), param('id').isInt({ min: 1 }), validate,
+  async (req, res, next) => {
+    try {
+      const refundId = Number(req.params.id);
+      const result = await withTransaction(async (client) => {
+        const ref = await client.query('SELECT * FROM fee_refunds WHERE id = $1 FOR UPDATE', [refundId]);
+        if (!ref.rows[0]) return { status: 404, body: { success: false, error: 'Refund request not found' } };
+        if (ref.rows[0].status !== 'pending') {
+          return { status: 409, body: { success: false, error: `Refund request has already been ${ref.rows[0].status}` } };
+        }
+        const { rows } = await client.query(
+          `UPDATE fee_refunds SET status = 'rejected', authorized_by = $2, authorized_at = now()
+            WHERE id = $1 RETURNING *`,
+          [refundId, req.user.id]);
+        return { status: 200, body: { success: true, data: { ...rows[0], amount: Number(rows[0].amount) } } };
+      });
+      if (result.status === 200) {
+        await logAudit({ userId: req.user.id, action: 'fees.refund_reject', entityType: 'fee_refunds', entityId: refundId, newValues: result.body.data, req });
       }
       return res.status(result.status).json(result.body);
     } catch (err) { return next(err); }

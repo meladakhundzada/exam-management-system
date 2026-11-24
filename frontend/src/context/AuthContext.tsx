@@ -23,12 +23,12 @@ export const ROLE_LABELS: Record<Role, string> = {
 export const ROLE_ROUTES: Record<Role, string[]> = {
   SUPER_ADMIN: ['*'],
   EXAM_OFFICER: [
-    '/dashboard', '/students', '/lecturers', '/departments', '/subjects',
+    '/dashboard', '/profile', '/students', '/lecturers', '/departments', '/subjects',
     '/exams', '/timetable', '/attendance', '/marks', '/results', '/fees',
-    '/complaints', '/reports', '/notifications',
+    '/scholarships', '/fines', '/complaints', '/reports', '/notifications',
   ],
-  FINANCE: ['/dashboard', '/fees', '/reports'],
-  LECTURER: ['/dashboard', '/students', '/subjects', '/exams', '/timetable', '/attendance', '/marks', '/results', '/reports', '/complaints', '/notifications', '/settings'],
+  FINANCE: ['/dashboard', '/profile', '/fees', '/scholarships', '/fines', '/reports'],
+  LECTURER: ['/dashboard', '/profile', '/students', '/subjects', '/exams', '/timetable', '/attendance', '/marks', '/results', '/reports', '/complaints', '/notifications', '/settings'],
   STUDENT: ['/dashboard', '/profile', '/my-courses', '/my-attendance', '/timetable', '/results', '/fees', '/admit-card', '/complaints', '/settings'],
 };
 
@@ -42,6 +42,9 @@ interface AuthContextValue {
   hasRole: (...roles: Role[]) => boolean;
   canAccess: (path: string) => boolean;
   clearError: () => void;
+  // Update the signed-in user's photo in context after an upload/remove,
+  // so the sidebar and profile show it without a reload.
+  setPhotoUrl: (photoUrl: string | null) => void;
 }
 
 // The backend returns snake_case users with lowercase roles
@@ -66,6 +69,7 @@ function normalizeAuthUser(raw: unknown): AuthUser {
     email: String(u.email ?? ''),
     fullName: String(u.fullName ?? u.full_name ?? ''),
     role: (ROLE_MAP[role] ?? role) as Role,
+    photoUrl: (u.photoUrl ?? u.avatar_url ?? null) as string | null,
     // /auth/me returns Postgres ints for the linked ids; convert them to
     // strings for real — a bare `as string` cast leaves a number at
     // runtime, which broke strict-equality comparisons downstream
@@ -146,6 +150,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user],
   );
 
+  const setPhotoUrl = useCallback(
+    (photoUrl: string | null) => setUser((prev) => (prev ? { ...prev, photoUrl } : prev)),
+    [],
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -157,8 +166,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       hasRole,
       canAccess,
       clearError: () => setError(null),
+      setPhotoUrl,
     }),
-    [user, loading, error, login, logout, hasRole, canAccess],
+    [user, loading, error, login, logout, hasRole, canAccess, setPhotoUrl],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -33,6 +33,8 @@ app.use('/api/exams', require('./routes/exams'));
 app.use('/api/marks', require('./routes/marks'));
 app.use('/api/results', require('./routes/results'));
 app.use('/api/fees', require('./routes/fees'));
+app.use('/api/scholarships', require('./routes/scholarships'));
+app.use('/api/fines', require('./routes/fines'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/departments', require('./routes/departments'));

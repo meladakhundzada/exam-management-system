@@ -35,10 +35,36 @@ function publicUser(row, links) {
     full_name: row.full_name,
     email: row.email,
     role: row.role,
+    // avatar_url holds a downscaled JPEG data URL (see PUT /auth/photo);
+    // null when the user has no photo. Returned here so the UI can show
+    // it without an extra call.
+    avatar_url: row.avatar_url ?? null,
     student_id: links ? links.student_id : null,
     lecturer_id: links ? links.lecturer_id : null,
     department_id: links ? links.department_id : null,
   };
+}
+
+// Validate a profile-photo data URL. Accepts only JPEG/PNG/WebP images
+// no larger than 200 KB, verified by magic bytes (not just the claimed
+// MIME type) so a renamed non-image cannot be stored. Returns the byte
+// length on success, or an error message string on failure.
+const MAX_PHOTO_BYTES = 200 * 1024;
+function validatePhotoDataUrl(value) {
+  if (typeof value !== 'string') return 'Photo must be a data URL string';
+  const m = value.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!m) return 'Photo must be a JPEG, PNG or WebP image data URL';
+  let buf;
+  try { buf = Buffer.from(m[2], 'base64'); } catch { return 'Photo is not valid base64'; }
+  if (buf.length === 0 || buf.length > MAX_PHOTO_BYTES) return 'Photo must be 200 KB or smaller';
+  // Magic bytes: JPEG FF D8 FF, PNG 89 50 4E 47, WebP "RIFF....WEBP".
+  const isJpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+  const isWebp = buf.length > 11 && buf.toString('ascii', 0, 4) === 'RIFF'
+    && buf.toString('ascii', 8, 12) === 'WEBP';
+  const ok = (m[1] === 'jpeg' && isJpeg) || (m[1] === 'png' && isPng) || (m[1] === 'webp' && isWebp);
+  if (!ok) return 'Photo content does not match its image type';
+  return null;
 }
 
 // POST /api/auth/login — any role. Returns { token, user }.
@@ -52,7 +78,7 @@ router.post(
     try {
       const { email, password } = req.body;
       const { rows } = await query(
-        `SELECT u.id, u.full_name, u.email, u.password_hash, u.is_active, r.name AS role
+        `SELECT u.id, u.full_name, u.email, u.password_hash, u.is_active, u.avatar_url, r.name AS role
            FROM users u JOIN roles r ON r.id = u.role_id WHERE u.email = $1`,
         [email.toLowerCase()],
       );
@@ -130,11 +156,43 @@ router.post(
   },
 );
 
+// PUT /api/auth/photo — set the signed-in user's own profile photo.
+// Body: { photo: "data:image/jpeg;base64,..." } (client-downscaled to
+// at most 512px, JPEG). The photo is stored as a data URL in
+// users.avatar_url — the database, not disk, because Render's free-plan
+// filesystem is ephemeral and disk files vanish on restart/redeploy.
+// A user can change ONLY their own photo: the row updated is always
+// req.user.id, so there is no target-user parameter to abuse.
+router.put(
+  '/photo',
+  authenticate,
+  [body('photo').isString().notEmpty().withMessage('Photo data URL required')],
+  validate,
+  async (req, res, next) => {
+    try {
+      const problem = validatePhotoDataUrl(req.body.photo);
+      if (problem) return res.status(400).json({ success: false, error: problem });
+      await query('UPDATE users SET avatar_url = $1, updated_at = now() WHERE id = $2', [req.body.photo, req.user.id]);
+      await logAudit({ userId: req.user.id, action: 'auth.photo_update', entityType: 'users', entityId: req.user.id, req });
+      return res.json({ success: true, data: { avatar_url: req.body.photo } });
+    } catch (err) { return next(err); }
+  },
+);
+
+// DELETE /api/auth/photo — remove the signed-in user's own photo.
+router.delete('/photo', authenticate, async (req, res, next) => {
+  try {
+    await query('UPDATE users SET avatar_url = NULL, updated_at = now() WHERE id = $1', [req.user.id]);
+    await logAudit({ userId: req.user.id, action: 'auth.photo_remove', entityType: 'users', entityId: req.user.id, req });
+    return res.json({ success: true, data: { avatar_url: null } });
+  } catch (err) { return next(err); }
+});
+
 // GET /api/auth/me — current user + role + permissions.
 router.get('/me', authenticate, async (req, res, next) => {
   try {
     const { rows } = await query(
-      `SELECT u.id, u.full_name, u.email, u.phone, r.name AS role,
+      `SELECT u.id, u.full_name, u.email, u.phone, u.avatar_url, r.name AS role,
               COALESCE(array_agg(p.name) FILTER (WHERE p.name IS NOT NULL), '{}') AS permissions
          FROM users u JOIN roles r ON r.id = u.role_id
          LEFT JOIN role_permissions rp ON rp.role_id = r.id
@@ -180,7 +238,7 @@ router.post('/refresh', async (req, res, next) => {
       return res.status(401).json({ success: false, error: 'Token expired too long ago — please sign in again' });
     }
     const { rows } = await query(
-      `SELECT u.id, u.full_name, u.email, u.is_active, r.name AS role
+      `SELECT u.id, u.full_name, u.email, u.is_active, u.avatar_url, r.name AS role
          FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`,
       [decoded.id],
     );

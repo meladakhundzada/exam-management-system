@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth, ROLE_LABELS } from '../context/AuthContext';
+import { Avatar } from './ProfilePhoto';
 
 interface NavItem {
   to: string;
@@ -10,7 +11,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/dashboard', label: 'Dashboard', icon: '▦', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT'] },
-  { to: '/profile', label: 'My Profile', icon: '👤', roles: ['STUDENT'] },
+  { to: '/profile', label: 'My Profile', icon: '👤', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER', 'STUDENT'] },
   { to: '/students', label: 'Students', icon: '🎓', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/lecturers', label: 'Lecturers', icon: '👩‍🏫', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
   { to: '/departments', label: 'Departments', icon: '🏛️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER'] },
@@ -23,6 +24,8 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/marks', label: 'Marks Entry', icon: '✏️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER'] },
   { to: '/results', label: 'Results', icon: '📊', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
   { to: '/fees', label: 'Fees', icon: '💰', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'STUDENT'] },
+  { to: '/scholarships', label: 'Scholarships', icon: '🎖️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE'] },
+  { to: '/fines', label: 'Fines', icon: '⚠️', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE'] },
   { to: '/admit-card', label: 'Admit Card', icon: '🎫', roles: ['STUDENT'] },
   { to: '/complaints', label: 'Complaints / Rechecking', icon: '🔍', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'LECTURER', 'STUDENT'] },
   { to: '/reports', label: 'Reports', icon: '📄', roles: ['SUPER_ADMIN', 'EXAM_OFFICER', 'FINANCE', 'LECTURER'] },
@@ -85,8 +88,13 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
         </nav>
 
         <div className="border-t border-navy-800 p-4">
-          <p className="truncate text-sm font-semibold">{user.fullName}</p>
-          <p className="text-xs text-blue-200">{ROLE_LABELS[user.role]} · {user.email}</p>
+          <div className="flex items-center gap-3">
+            <Avatar name={user.fullName} photoUrl={user.photoUrl} size={40} />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{user.fullName}</p>
+              <p className="truncate text-xs text-blue-200">{ROLE_LABELS[user.role]} · {user.email}</p>
+            </div>
+          </div>
           <button
             onClick={handleLogout}
             className="mt-3 w-full rounded-lg bg-white/10 px-3 py-2 text-sm font-medium hover:bg-white/20"

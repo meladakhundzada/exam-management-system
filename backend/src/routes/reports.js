@@ -22,6 +22,44 @@ const STAFF = requireRole('super_admin', 'exam_officer');
 router.get('/dashboard', async (req, res, next) => {
   try {
     let counts; let byDept; let gradeDist;
+    // Privacy rule: a student must NEVER see system-wide totals, so for
+    // students this endpoint returns ONLY personal numbers (own subjects,
+    // own exams, own published results, own CGPA, own outstanding fees).
+    // Students cannot open the Reports page in the UI, but the endpoint
+    // itself must not leak global counts to them either.
+    if (req.user.role === 'student') {
+      const s = await query('SELECT id FROM students WHERE user_id = $1', [req.user.id]);
+      const sid = s.rows[0]?.id ?? -1;
+      const myCgpa = await studentGpa({ query: (t, p) => query(t, p) }, sid);
+      counts = await query(
+        `SELECT (SELECT count(*)::int FROM enrollments
+                  WHERE student_id = $1 AND status = 'enrolled') AS my_subjects,
+                (SELECT count(*)::int FROM examinations e
+                  WHERE e.status IN ('scheduled', 'ongoing')
+                    AND EXISTS (SELECT 1 FROM exam_schedules es
+                                 JOIN enrollments en ON en.subject_id = es.subject_id
+                                WHERE es.exam_id = e.id AND en.student_id = $1
+                                  AND en.status = 'enrolled')) AS my_upcoming_exams,
+                (SELECT count(*)::int FROM results
+                  WHERE student_id = $1 AND is_published) AS my_published_results,
+                (SELECT COALESCE(SUM(amount_due - amount_paid), 0)::float FROM student_fees
+                  WHERE student_id = $1 AND status IN ('unpaid', 'partial', 'overdue')) AS my_fees_due`,
+        [sid]);
+      byDept = await query('SELECT 1 WHERE FALSE');
+      gradeDist = await query(
+        `SELECT grade, count(*)::int AS count FROM results
+          WHERE student_id = $1 AND is_published GROUP BY grade ORDER BY grade`, [sid]);
+      const recentParams = [req.user.id];
+      const recent = await query(
+        `SELECT a.action, a.entity_type, a.created_at, u.full_name AS user_name
+           FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id
+          WHERE a.user_id = $1 ORDER BY a.created_at DESC LIMIT 10`,
+        recentParams);
+      return res.json({
+        success: true,
+        data: { ...counts.rows[0], my_cgpa: myCgpa, students_by_department: byDept.rows, grade_distribution: gradeDist.rows, recent_activities: recent.rows },
+      });
+    }
     if (req.user.role === 'lecturer') {
       const scope = await getLecturerScope(req.user.id);
       const p = [scope?.lecturerId ?? -1];

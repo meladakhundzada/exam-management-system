@@ -8,6 +8,8 @@ import Exams from './pages/Exams';
 import Marks from './pages/Marks';
 import Results from './pages/Results';
 import Fees from './pages/Fees';
+import Scholarships from './pages/Scholarships';
+import Fines from './pages/Fines';
 import Users from './pages/Users';
 import Departments from './pages/Departments';
 import Subjects from './pages/Subjects';
@@ -123,6 +125,8 @@ function Layout() {
             <Route path="/marks/:examId" element={<Marks />} />
             <Route path="/results" element={<Results />} />
             <Route path="/fees" element={<Fees />} />
+            <Route path="/scholarships" element={<Scholarships />} />
+            <Route path="/fines" element={<Fines />} />
             <Route path="/lecturers" element={<Lecturers />} />
             <Route path="/departments" element={<Departments />} />
             <Route path="/subjects" element={<Subjects />} />
