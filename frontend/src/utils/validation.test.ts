@@ -20,10 +20,10 @@ describe('isValidPersonName', () => {
     expect(isValidPersonName('زاهد افغان')).toBe(true);
   });
 
-  it('accepts hyphens, apostrophes and dots', () => {
-    expect(isValidPersonName('Ahmad-Karimi')).toBe(true);
-    expect(isValidPersonName("O'Brien")).toBe(true);
-    expect(isValidPersonName('Eng. Irfan')).toBe(true);
+  it('rejects hyphens, apostrophes and dots — letters only', () => {
+    expect(isValidPersonName('Ahmad-Karimi')).toBe(false);
+    expect(isValidPersonName("O'Brien")).toBe(false);
+    expect(isValidPersonName('Eng. Irfan')).toBe(false);
   });
 
   it('rejects numbers as a name (the reported bug: "4444" / "123")', () => {

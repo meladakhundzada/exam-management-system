@@ -9,11 +9,12 @@
 const PERSON_NAME_ERROR = 'Please enter a real name (letters only, not numbers).';
 const PHONE_ERROR = 'Enter a valid phone number (7–15 digits, optional leading +).';
 
-// A real person name: at least 2 letters. Letters may be Latin or
-// Pashto/Dari/Arabic script; spaces, hyphens, apostrophes and dots are
-// allowed (e.g. "Maryam Karimi", "میلاد اخندزاده", "O'Brien", "Eng. Irfan").
-// Digits and other symbols are NOT allowed — "123" or "4444" is not a name.
-const NAME_ALLOWED = /^[\p{L}\p{M} .'\-]+$/u;
+// A real person name: letters ONLY (plus spaces between words).
+// Letters may be Latin or Pashto/Dari/Arabic script
+// (e.g. "Maryam Karimi", "میلاد اخندزاده"). No digits, hyphens,
+// apostrophes, dots or any other symbol — "123", "4444", "O'Brien"
+// and "Eng. Irfan" are all rejected.
+const NAME_ALLOWED = /^[\p{L}\p{M} ]+$/u;
 
 function isValidPersonName(value) {
   if (typeof value !== 'string') return false;

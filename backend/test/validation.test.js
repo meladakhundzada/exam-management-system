@@ -15,8 +15,8 @@ test('person name: accepts Latin and Pashto/Dari names', () => {
   assert.equal(isValidPersonName('Melad Akhundzada'), true);
   assert.equal(isValidPersonName('میلاد اخندزاده'), true);
   assert.equal(isValidPersonName('احمد'), true);
-  assert.equal(isValidPersonName("O'Brien"), true);
-  assert.equal(isValidPersonName('Eng. Irfan'), true);
+  assert.equal(isValidPersonName("O'Brien"), false);
+  assert.equal(isValidPersonName('Eng. Irfan'), false);
 });
 
 test('person name: rejects numbers as a name (the reported bug)', () => {
