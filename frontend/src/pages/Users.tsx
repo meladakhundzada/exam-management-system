@@ -58,7 +58,7 @@ export default function Users() {
   // student list finishes loading.
   const studentIdAuto = useRef(false);
   const [editTarget, setEditTarget] = useState<AppUser | null>(null);
-  const [editForm, setEditForm] = useState({ full_name: '', phone: '', role: 'exam_officer' as UserRole, is_active: true });
+  const [editForm, setEditForm] = useState({ full_name: '', email: '', phone: '', role: 'exam_officer' as UserRole, is_active: true });
 
   const load = async (p = 1) => {
     setLoading(true);
@@ -158,7 +158,7 @@ export default function Users() {
 
   const openEdit = (u: AppUser) => {
     setEditTarget(u);
-    setEditForm({ full_name: u.full_name, phone: u.phone ?? '', role: u.role, is_active: u.is_active });
+    setEditForm({ full_name: u.full_name, email: u.email, phone: u.phone ?? '', role: u.role, is_active: u.is_active });
     setFormError(null);
   };
 
@@ -167,18 +167,22 @@ export default function Users() {
     if (!editTarget) return;
     const nameErr = validatePersonName(editForm.full_name);
     if (nameErr) { setFormError(nameErr); return; }
+    const emailErr = validateEmail(editForm.email);
+    if (emailErr) { setFormError(emailErr); return; }
     const phoneErr = validatePhone(editForm.phone);
     if (phoneErr) { setFormError(phoneErr); return; }
     setSaving(true);
     try {
       const isSelf = String(editTarget.id) === user?.id;
+      const newEmail = editForm.email.trim().toLowerCase();
       await usersApi.update(editTarget.id, {
         full_name: editForm.full_name.trim(),
+        email: newEmail,
         phone: editForm.phone || undefined,
         role: isSelf ? undefined : editForm.role,
         is_active: isSelf ? undefined : editForm.is_active,
       });
-      setNotice(`User ${editTarget.email} updated.`);
+      setNotice(`User ${newEmail} updated.`);
       setEditTarget(null);
       setFormError(null);
       await load(page);
@@ -311,6 +315,10 @@ export default function Users() {
             <label className="mt-4 block text-sm font-medium">Full name
               <input required value={editForm.full_name} onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })} className={inputCls} />
             </label>
+            <label className="mt-3 block text-sm font-medium">Email
+              <input required type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className={inputCls} />
+            </label>
+            <p className="mt-1 text-xs text-slate-500">Changing the email changes the login email too — the user signs in with the new address (password stays the same).</p>
             <label className="mt-3 block text-sm font-medium">Phone
               <input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} className={inputCls} />
             </label>

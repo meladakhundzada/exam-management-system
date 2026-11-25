@@ -158,12 +158,16 @@ router.post('/', createValidators, validate, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
-// PUT /api/users/:id — change name / phone / role / active status.
+// PUT /api/users/:id — change name / email / phone / role / active status.
 // You cannot deactivate yourself or change your own role (that would
-// lock you out of the Super Admin account). Changing a role does not
-// create or remove linked lecturer/student rows.
+// lock you out of the Super Admin account). Changing your own email IS
+// allowed. Changing a role does not create or remove linked lecturer/
+// student rows. Changing the email also updates the linked lecturers /
+// students row, so the login email and the academic record never drift
+// apart (the create route does the same in reverse).
 router.put('/:id', param('id').isInt(),
   [body('full_name').optional().trim().custom(personName),
+   body('email').optional().trim().isEmail().withMessage('Valid email required'),
    body('phone').optional({ values: 'falsy' }).custom(phone),
    body('role').optional().isIn(ROLE_NAMES),
    body('is_active').optional().isBoolean()],
@@ -174,6 +178,7 @@ router.put('/:id', param('id').isInt(),
       if (id === req.user.id && (b.is_active === false || (b.role && b.role !== 'super_admin'))) {
         return res.status(400).json({ success: false, error: 'You cannot deactivate yourself or change your own role' });
       }
+      const newEmail = b.email ? String(b.email).trim().toLowerCase() : null;
       const updated = await withTransaction(async (client) => {
         const current = await client.query(
           'SELECT u.*, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1', [id]);
@@ -183,12 +188,25 @@ router.put('/:id', param('id').isInt(),
           await ensureRoles(client);
           roleId = await getRoleId(client, b.role);
         }
+        const emailChanged = newEmail && newEmail !== String(current.rows[0].email).toLowerCase();
+        if (emailChanged) {
+          const dup = await client.query(
+            'SELECT id FROM users WHERE lower(email) = $1 AND id <> $2', [newEmail, id]);
+          if (dup.rows[0]) {
+            throw Object.assign(new Error('This email is already used by another user.'), { status: 400 });
+          }
+        }
         const { rows } = await client.query(
           `UPDATE users SET full_name = COALESCE($1, full_name), phone = $2,
-             role_id = $3, is_active = COALESCE($4, is_active), updated_at = now()
-           WHERE id = $5 RETURNING id, full_name, email, phone, is_active, last_login_at, created_at`,
+             role_id = $3, is_active = COALESCE($4, is_active),
+             email = COALESCE($5, email), updated_at = now()
+           WHERE id = $6 RETURNING id, full_name, email, phone, is_active, last_login_at, created_at`,
           [b.full_name || null, b.phone ?? current.rows[0].phone, roleId,
-           b.is_active === undefined ? null : b.is_active, id]);
+           b.is_active === undefined ? null : b.is_active, newEmail, id]);
+        if (emailChanged) {
+          await client.query('UPDATE lecturers SET email = $1 WHERE user_id = $2', [newEmail, id]);
+          await client.query('UPDATE students SET email = $1 WHERE user_id = $2', [newEmail, id]);
+        }
         return rows[0];
       });
       if (!updated) return res.status(404).json({ success: false, error: 'User not found' });

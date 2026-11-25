@@ -155,22 +155,41 @@ router.post('/', requireRole('super_admin', 'exam_officer'),
     } catch (err) { return next(err); }
   });
 
-// PUT /api/students/:id
+// PUT /api/students/:id — also syncs the login (users) email when the
+// student's email changes, so the login and the academic record stay in
+// step (the Users edit does the same in reverse). The whole change is
+// one transaction: a duplicate login email rolls everything back.
 router.put('/:id', requireRole('super_admin', 'exam_officer'),
   param('id').isInt(), studentValidators, validate, async (req, res, next) => {
     try {
       const b = req.body;
-      const { rows } = await query(
-        `UPDATE students SET department_id=$1, full_name=$2, email=$3, phone=$4, gender=$5,
+      const newEmail = b.email.toLowerCase();
+      const student = await withTransaction(async (client) => {
+        const current = await client.query(
+          'SELECT user_id, email FROM students WHERE id = $1', [req.params.id]);
+        if (!current.rows[0]) return null;
+        const { rows } = await client.query(
+          `UPDATE students SET department_id=$1, full_name=$2, email=$3, phone=$4, gender=$5,
            date_of_birth=$6, address=$7, guardian_name=$8, guardian_phone=$9,
            admission_year=$10, current_semester=$11, status=$12
          WHERE id=$13 RETURNING *`,
-        [b.department_id, b.full_name, b.email.toLowerCase(), b.phone || null, b.gender || null,
-         b.date_of_birth || null, b.address || null, b.guardian_name || null, b.guardian_phone || null,
-         b.admission_year, b.current_semester || 1, b.status || 'active', req.params.id]);
-      if (!rows[0]) return res.status(404).json({ success: false, error: 'Student not found' });
-      await logAudit({ userId: req.user.id, action: 'students.update', entityType: 'students', entityId: rows[0].id, newValues: rows[0], req });
-      return res.json({ success: true, data: rows[0] });
+          [b.department_id, b.full_name, newEmail, b.phone || null, b.gender || null,
+           b.date_of_birth || null, b.address || null, b.guardian_name || null, b.guardian_phone || null,
+           b.admission_year, b.current_semester || 1, b.status || 'active', req.params.id]);
+        if (rows[0].user_id && newEmail !== String(current.rows[0].email || '').toLowerCase()) {
+          const dup = await client.query(
+            'SELECT id FROM users WHERE lower(email) = $1 AND id <> $2', [newEmail, rows[0].user_id]);
+          if (dup.rows[0]) {
+            throw Object.assign(new Error('This email is already used by another user.'), { status: 400 });
+          }
+          await client.query('UPDATE users SET email = $1, updated_at = now() WHERE id = $2',
+            [newEmail, rows[0].user_id]);
+        }
+        return rows[0];
+      });
+      if (!student) return res.status(404).json({ success: false, error: 'Student not found' });
+      await logAudit({ userId: req.user.id, action: 'students.update', entityType: 'students', entityId: student.id, newValues: student, req });
+      return res.json({ success: true, data: student });
     } catch (err) { return next(err); }
   });
 

@@ -102,18 +102,38 @@ router.post('/', requireRole('super_admin', 'exam_officer'),
     } catch (err) { return next(err); }
   });
 
+// PUT /api/lecturers/:id — also syncs the login (users) email when the
+// lecturer's email changes, so the login and the academic record stay in
+// step (the Users edit does the same in reverse). One transaction: a
+// duplicate login email rolls everything back.
 router.put('/:id', requireRole('super_admin', 'exam_officer'), param('id').isInt(), lecturerValidators, validate,
   async (req, res, next) => {
     try {
       const b = req.body;
-      const { rows } = await query(
-        `UPDATE lecturers SET department_id=$1, full_name=$2, email=$3, phone=$4, gender=$5,
+      const newEmail = b.email.toLowerCase();
+      const lecturer = await withTransaction(async (client) => {
+        const current = await client.query(
+          'SELECT user_id, email FROM lecturers WHERE id = $1', [req.params.id]);
+        if (!current.rows[0]) return null;
+        const { rows } = await client.query(
+          `UPDATE lecturers SET department_id=$1, full_name=$2, email=$3, phone=$4, gender=$5,
            designation=$6, qualification=$7, joining_date=$8, is_active=$9 WHERE id=$10 RETURNING *`,
-        [b.department_id, b.full_name, b.email.toLowerCase(), b.phone || null, b.gender || null,
-         b.designation || null, b.qualification || null, b.joining_date || null, b.is_active !== false, req.params.id]);
-      if (!rows[0]) return res.status(404).json({ success: false, error: 'Lecturer not found' });
-      await logAudit({ userId: req.user.id, action: 'lecturers.update', entityType: 'lecturers', entityId: rows[0].id, newValues: rows[0], req });
-      return res.json({ success: true, data: rows[0] });
+          [b.department_id, b.full_name, newEmail, b.phone || null, b.gender || null,
+           b.designation || null, b.qualification || null, b.joining_date || null, b.is_active !== false, req.params.id]);
+        if (rows[0].user_id && newEmail !== String(current.rows[0].email || '').toLowerCase()) {
+          const dup = await client.query(
+            'SELECT id FROM users WHERE lower(email) = $1 AND id <> $2', [newEmail, rows[0].user_id]);
+          if (dup.rows[0]) {
+            throw Object.assign(new Error('This email is already used by another user.'), { status: 400 });
+          }
+          await client.query('UPDATE users SET email = $1, updated_at = now() WHERE id = $2',
+            [newEmail, rows[0].user_id]);
+        }
+        return rows[0];
+      });
+      if (!lecturer) return res.status(404).json({ success: false, error: 'Lecturer not found' });
+      await logAudit({ userId: req.user.id, action: 'lecturers.update', entityType: 'lecturers', entityId: lecturer.id, newValues: lecturer, req });
+      return res.json({ success: true, data: lecturer });
     } catch (err) { return next(err); }
   });
 

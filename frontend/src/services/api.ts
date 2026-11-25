@@ -574,7 +574,7 @@ export const usersApi = {
   get: (id: number) => api.get<ApiResponse<AppUser>>(`/users/${id}`),
   create: (payload: CreateUserPayload) =>
     api.post<ApiResponse<AppUser>>('/users', payload),
-  update: (id: number, payload: Partial<Pick<AppUser, 'full_name' | 'phone' | 'role' | 'is_active'>>) =>
+  update: (id: number, payload: Partial<Pick<AppUser, 'full_name' | 'email' | 'phone' | 'role' | 'is_active'>>) =>
     api.put<ApiResponse<AppUser>>(`/users/${id}`, payload),
   remove: (id: number) => api.delete<ApiResponse<{ message: string }>>(`/users/${id}`),
 };
