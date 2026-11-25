@@ -88,7 +88,7 @@ export default function Users() {
       studentIdAuto.current = true;
       setCreateForm((f) => ({
         ...f,
-        student_id: nextStudentId(studentNos, CURRENT_YEAR),
+        student_id: nextStudentId(studentNos),
         admission_year: f.admission_year ?? CURRENT_YEAR,
       }));
     }
@@ -99,7 +99,7 @@ export default function Users() {
   // the role was chosen); never overwrite a manually typed ID.
   useEffect(() => {
     if (createForm.role === 'student' && studentIdAuto.current && studentNos !== null) {
-      setCreateForm((f) => ({ ...f, student_id: nextStudentId(studentNos, CURRENT_YEAR) }));
+      setCreateForm((f) => ({ ...f, student_id: nextStudentId(studentNos) }));
     }
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [studentNos]);
@@ -118,9 +118,9 @@ export default function Users() {
     if (createForm.password.length < 8) { setFormError('Password must be at least 8 characters.'); return; }
     if (needsDepartment && !createForm.department_id) { setFormError('Choose a department for a lecturer or student account.'); return; }
     // Student ID / admission year are auto-generated when left blank:
-    // next STU-<year>-NNN from the existing students, current year.
+    // next plain number (001, 002, ...) from the existing students.
     const studentId = createForm.role === 'student'
-      ? (createForm.student_id?.trim() || nextStudentId(studentNos, CURRENT_YEAR))
+      ? (createForm.student_id?.trim() || nextStudentId(studentNos))
       : undefined;
     const admissionYear = createForm.role === 'student'
       ? (createForm.admission_year ?? CURRENT_YEAR)
@@ -239,7 +239,7 @@ export default function Users() {
               {createForm.role === 'student' && (
                 <div className="grid grid-cols-2 gap-3">
                   <label className="mt-3 block text-sm font-medium">Student ID (auto — leave blank to generate)
-                    <input value={createForm.student_id ?? ''} onChange={(e) => { studentIdAuto.current = false; setCreateForm({ ...createForm, student_id: e.target.value }); }} placeholder={`e.g. STU-${CURRENT_YEAR}-001`} className={inputCls} />
+                    <input value={createForm.student_id ?? ''} onChange={(e) => { studentIdAuto.current = false; setCreateForm({ ...createForm, student_id: e.target.value }); }} placeholder={`e.g. 002`} className={inputCls} />
                   </label>
                   <label className="mt-3 block text-sm font-medium">Admission year
                     <input type="number" min={2000} max={2100} value={createForm.admission_year ?? CURRENT_YEAR} onChange={(e) => setCreateForm({ ...createForm, admission_year: e.target.value ? Number(e.target.value) : undefined })} className={inputCls} />

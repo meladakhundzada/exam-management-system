@@ -105,7 +105,7 @@ router.get('/', async (req, res, next) => {
 // Marks entry needs a roster, not just existing rows: on a fresh exam
 // GET /api/marks returns nothing, so the page would have nobody to enter
 // marks for. student_pk is the internal students.id (what /bulk needs);
-// student_no is the public STU-… number shown in the UI.
+// student_no is the public student number (e.g. 001) shown in the UI.
 // Staff + the subject's own lecturer only: a lecturer may not pull the
 // roster (names + existing marks) for another lecturer's subject.
 router.get('/roster', requireRole('super_admin', 'exam_officer', 'lecturer'), async (req, res, next) => {

@@ -13,7 +13,7 @@
 -- * Marks are entered per subject per exam (0–100). A mark row is unique
 --   per (exam_id, student_id, subject_id). Status flow:
 --   draft → submitted → approved → published (via results.is_published).
--- * A student is identified by student_id (e.g. STU-2024-001) AND email;
+-- * A student is identified by student_id (e.g. 001) AND email;
 --   both are UNIQUE so duplicate registration is impossible at the DB level.
 -- * Soft-delete is NOT used: deletes are restricted (ON DELETE RESTRICT)
 --   on master data so history/audit is never orphaned; users are
@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS students (
   id               SERIAL PRIMARY KEY,
   user_id          INTEGER REFERENCES users(id) ON DELETE SET NULL UNIQUE,
   department_id    INTEGER NOT NULL REFERENCES departments(id) ON DELETE RESTRICT,
-  student_id       VARCHAR(30) NOT NULL UNIQUE,      -- e.g. STU-2024-001 (admission no.)
+  student_id       VARCHAR(30) NOT NULL UNIQUE,      -- e.g. 001 (admission no.)
   full_name        VARCHAR(150) NOT NULL,
   email            VARCHAR(255) NOT NULL UNIQUE,
   phone            VARCHAR(30),

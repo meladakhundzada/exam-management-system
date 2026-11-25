@@ -29,7 +29,7 @@ interface ScheduleRow {
 // code (s.student_id) — the code overwrites the numeric FK in the row
 // object, so the numeric student id is resolved through the student list.
 interface AttendanceRowRaw {
-  student_id: string; // student code, e.g. STU-2026-001
+  student_id: string; // student code, e.g. 001
   full_name: string;
   status: 'present' | 'absent' | 'late';
   room_id?: number | null;

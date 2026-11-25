@@ -288,7 +288,7 @@ export interface MarkRow {
   subjectCode?: string;
   subjectTitle?: string;
   studentId: string; // internal students.id (what /bulk needs)
-  studentNo: string; // public STU-… number
+  studentNo: string; // public student number (e.g. 001)
   studentName: string;
   marksObtained: number | null;
   totalMarks: number;
@@ -296,7 +296,7 @@ export interface MarkRow {
 }
 
 // Backend GET /api/marks rows are snake_case (student_pk = internal id,
-// student_no = public STU-… number); map them to the camelCase MarkRow.
+// student_no = public student number (e.g. 001)); map them to the camelCase MarkRow.
 export function normalizeMarkRow(raw: Record<string, unknown>): MarkRow {
   return {
     id: raw.id != null ? String(raw.id) : undefined,
@@ -357,7 +357,7 @@ export const marksApi = {
 
 export interface ResultRow {
   studentId: string; // internal students.id
-  studentNo: string; // public STU-… number
+  studentNo: string; // public student number (e.g. 001)
   studentName: string;
   subjectCode: string;
   subjectName: string;
@@ -436,7 +436,7 @@ export function normalizeExam(raw: Record<string, unknown>): Exam {
 export const resultsApi = {
   // GET /api/results/student/:studentId — { results, cgpa, total_subjects }.
   // Takes the INTERNAL students.id; the Results page resolves public
-  // STU-… numbers to it first. No semester param exists on the backend.
+  // plain student numbers (e.g. 001) to it first. No semester param exists on the backend.
   byStudent: (studentId: string) =>
     api.get<ApiResponse<{ results: Record<string, unknown>[]; cgpa: number | null; total_subjects: number }>>(
       `/results/student/${encodeURIComponent(studentId)}`,
@@ -526,7 +526,7 @@ export const feesApi = {
     api.get<ApiResponse<StudentFee[]>>(`/fees/due?${buildQuery(params)}`),
   report: (params: PaginatedParams = {}) =>
     api.get<ApiResponse<FeeReport>>(`/fees/report?${buildQuery(params)}`),
-  assign: (payload: { fee_type_id: number; amount?: number; student_id?: number; department_id?: number; semester_id?: number; academic_year_id?: number; due_date?: string }) =>
+  assign: (payload: { fee_type_id: number; amount?: number; student_id?: number | string; department_id?: number; semester_id?: number; academic_year_id?: number; due_date?: string }) =>
     api.post<ApiResponse<StudentFee[]> & { count: number }>('/fees/assign', payload),
   get: (id: number) => api.get<ApiResponse<StudentFee>>(`/fees/${id}`),
   pay: (id: number, payload: { amount: number; payment_method?: string; payment_date?: string; note?: string }) =>

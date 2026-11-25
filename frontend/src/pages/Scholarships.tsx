@@ -380,7 +380,7 @@ export default function Scholarships() {
             </select>
           </label>
           <label className="mt-3 block text-sm font-medium">Student — search by name, student number or email
-            <input value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} placeholder="e.g. Zahid or STU-2026-001" className={inputCls} />
+            <input value={studentSearch} onChange={(e) => setStudentSearch(e.target.value)} placeholder="e.g. Zahid or 001" className={inputCls} />
           </label>
           <label className="mt-3 block text-sm font-medium">Student
             <select required value={awardForm.student_id} onChange={(e) => setAwardForm({ ...awardForm, student_id: e.target.value })} className={inputCls}>

@@ -23,7 +23,7 @@ export default function Results() {
   const isLecturer = hasRole('LECTURER');
   const [mySubjectCodes, setMySubjectCodes] = useState<Set<string> | null>(null);
   // Students see only their own results; staff enter a student number
-  // (STU-2026-001) or an internal id to inspect.
+  // (001) or an internal id to inspect.
   const [studentInput, setStudentInput] = useState(user?.studentId ?? '');
   // Internal students.id resolved from the input — what the API needs.
   const [studentId, setStudentId] = useState(user?.studentId ?? '');
@@ -65,19 +65,22 @@ export default function Results() {
   }, [isStaff, isLecturer, user?.lecturerId]);
 
   // Resolve what the user typed to the internal students.id:
-  // - a bare number is already the internal id;
-  // - STU-2026-001 (or any non-numeric value) is looked up via the
-  //   students search, matching the public student_id exactly.
+  // - the public student number (e.g. 001) is looked up via the students
+  //   search, matching student_id exactly — a bare number is only treated
+  //   as the internal record id when no student number matches it.
   const resolveStudentId = async (input: string): Promise<string> => {
     const trimmed = input.trim();
-    if (/^\d+$/.test(trimmed)) return trimmed;
     const { data } = await studentsApi.list({ search: trimmed, limit: 10 });
     const rows = data.data as unknown as Array<Record<string, unknown>>;
-    const match = rows.find(
+    const byCode = rows.find(
       (r) => String(r.student_id ?? '').toLowerCase() === trimmed.toLowerCase(),
-    ) ?? rows[0];
-    if (!match) throw new Error(`No student found for "${trimmed}".`);
-    return String(match.id);
+    );
+    if (byCode) return String(byCode.id);
+    // No student number matches: a bare number is the internal record id.
+    if (/^\d+$/.test(trimmed)) return trimmed;
+    const first = rows[0];
+    if (first) return String(first.id);
+    throw new Error(`No student found for "${trimmed}".`);
   };
 
   const load = async (id: string) => {
@@ -188,7 +191,7 @@ export default function Results() {
       {!isStudent && (
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-sm font-medium">Student ID
-            <input value={studentInput} onChange={(e) => setStudentInput(e.target.value)} placeholder="e.g. STU-2026-001" className="mt-1 block w-64 rounded-lg border px-3 py-2" />
+            <input value={studentInput} onChange={(e) => setStudentInput(e.target.value)} placeholder="e.g. 001" className="mt-1 block w-64 rounded-lg border px-3 py-2" />
           </label>
           <button onClick={() => load(studentInput)} disabled={loading} className="rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
             {loading ? 'Loading…' : 'View results'}

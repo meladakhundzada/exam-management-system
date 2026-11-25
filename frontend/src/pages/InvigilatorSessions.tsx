@@ -55,7 +55,7 @@ interface ScheduleRow {
 // object, so the numeric student id is resolved through the student list
 // (same workaround as the Attendance page).
 interface AttendanceRowRaw {
-  student_id: string; // student code, e.g. STU-2026-001
+  student_id: string; // student code, e.g. 001
   full_name: string;
   status: 'present' | 'absent' | 'late';
   room_id?: number | null;

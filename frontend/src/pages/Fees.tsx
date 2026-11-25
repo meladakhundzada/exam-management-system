@@ -206,7 +206,7 @@ export default function Fees() {
   const assignFee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!assignForm.fee_type_id) { setFormError('Choose a fee type.'); return; }
-    if (assignForm.target === 'student' && !assignForm.student_id) { setFormError('Enter a student ID (the number from the Students page, e.g. 12).'); return; }
+    if (assignForm.target === 'student' && !assignForm.student_id) { setFormError('Enter a student number (e.g. 001).'); return; }
     if (assignForm.target === 'department' && !assignForm.department_id) { setFormError('Enter a department ID.'); return; }
     setSaving(true);
     try {
@@ -215,7 +215,7 @@ export default function Fees() {
         due_date: assignForm.due_date || undefined,
         semester_id: assignForm.semester_id ? Number(assignForm.semester_id) : undefined,
       };
-      if (assignForm.target === 'student') payload.student_id = Number(assignForm.student_id);
+      if (assignForm.target === 'student') payload.student_id = assignForm.student_id.trim();
       else payload.department_id = Number(assignForm.department_id);
       const { data } = await feesApi.assign(payload);
       setNotice(`${data.count} fee record(s) assigned.`);
@@ -276,10 +276,10 @@ export default function Fees() {
 
   const loadProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profileId) { setProfileError('Enter a student record ID (the number from the Students page).'); return; }
+    if (!profileId) { setProfileError('Enter a student number (e.g. 001).'); return; }
     setSaving(true);
     try {
-      const { data } = await feesApi.byStudent(Number(profileId));
+      const { data } = await feesApi.byStudent(profileId.trim());
       setProfile(data.data);
       setProfileError(null);
     } catch (err) { setProfile(null); setProfileError(apiErrorMessage(err)); } finally { setSaving(false); }
@@ -531,8 +531,8 @@ export default function Fees() {
             </select>
           </label>
           {assignForm.target === 'student' ? (
-            <label className="mt-3 block text-sm font-medium">Student ID (number from the Students page)
-              <input type="number" min={1} value={assignForm.student_id} onChange={(e) => setAssignForm({ ...assignForm, student_id: e.target.value })} className={inputCls} />
+            <label className="mt-3 block text-sm font-medium">Student number
+              <input value={assignForm.student_id} onChange={(e) => setAssignForm({ ...assignForm, student_id: e.target.value })} placeholder="e.g. 001" className={inputCls} />
             </label>
           ) : (
             <label className="mt-3 block text-sm font-medium">Department ID
@@ -561,8 +561,8 @@ export default function Fees() {
         <h2 className="text-lg font-bold">Student financial profile</h2>
         <p className="text-sm text-slate-500">Look up one student&apos;s full fee record — charges, payments and outstanding balance.</p>
         <form onSubmit={loadProfile} className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="text-sm font-medium">Student record ID
-            <input type="number" min={1} value={profileId} onChange={(e) => setProfileId(e.target.value)} placeholder="e.g. 1" className={`${inputCls} w-40`} />
+          <label className="text-sm font-medium">Student number
+            <input value={profileId} onChange={(e) => setProfileId(e.target.value)} placeholder="e.g. 001" className={`${inputCls} w-40`} />
           </label>
           <button type="submit" disabled={saving} className="rounded-lg bg-navy-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Load profile</button>
         </form>

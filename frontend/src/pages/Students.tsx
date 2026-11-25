@@ -101,14 +101,14 @@ export default function Students() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Student | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Student | null>(null);
-  const [form, setForm] = useState<FormState>(() => emptyForm(`STU-${CURRENT_YEAR}-001`));
+  const [form, setForm] = useState<FormState>(() => emptyForm('001'));
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Next auto student number from the loaded list (null = list unavailable,
   // so the helper falls back to a timestamp suffix).
   const nextId = (list: Student[] | null) =>
-    nextStudentId(list ? list.map((s) => s.studentNo) : null, CURRENT_YEAR);
+    nextStudentId(list ? list.map((s) => s.studentNo) : null);
 
   const load = async (): Promise<Student[]> => {
     setLoading(true);
@@ -170,7 +170,7 @@ export default function Students() {
   };
 
   const validate = () => {
-    if (!/^[A-Za-z0-9-]{4,20}$/.test(form.studentNo)) return 'Student number could not be generated — please reload the page and try again.';
+    if (!/^[A-Za-z0-9-]{3,20}$/.test(form.studentNo)) return 'Student number could not be generated — please reload the page and try again.';
     if (form.fullName.trim().length < 3) return 'Full name is required (at least 3 characters).';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return 'Enter a valid email address.';
     if (!form.departmentId) return 'Choose a department.';

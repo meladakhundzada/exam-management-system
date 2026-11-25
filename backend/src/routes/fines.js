@@ -94,7 +94,7 @@ router.get('/outstanding', requireRole(...STAFF), async (req, res, next) => {
 
 // GET /api/fines — list fines (staff only).
 // Filters: ?status=outstanding|paid|waived|overdue, ?student_id=,
-// ?department_id=, ?search= (student name / STU number / reason),
+// ?department_id=, ?search= (student name / student number / reason),
 // ?page&limit.
 router.get('/', requireRole(...STAFF), async (req, res, next) => {
   try {

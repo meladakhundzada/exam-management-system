@@ -30,6 +30,16 @@ async function ownStudentId(req) {
   return rows[0]?.id || null;
 }
 
+// Resolve a student identifier to the internal students.id: the public
+// student number ("001") wins when it matches, otherwise a bare number is
+// the internal record id. Returns null when nothing matches.
+async function resolveStudentPk(raw) {
+  const byCode = await query('SELECT id FROM students WHERE student_id = $1', [raw]);
+  if (byCode.rows.length) return byCode.rows[0].id;
+  if (/^\d+$/.test(raw)) return Number(raw);
+  return null;
+}
+
 // One fee row with student/fee-type names and the computed balance;
 // overdue is derived from due_date so it needs no background job.
 const FEE_SELECT = `
@@ -81,10 +91,12 @@ router.post('/types', requireRole(...STAFF),
 
 // GET /api/fees/student/:studentId — one student's fees + their payments.
 // Staff see any student; a student sees only their own record.
-router.get('/student/:studentId', param('studentId').isInt({ min: 1 }), validate,
+// Accepts the public student number ("001") or the internal record id.
+router.get('/student/:studentId', param('studentId').trim().notEmpty(), validate,
   async (req, res, next) => {
     try {
-      const studentId = Number(req.params.studentId);
+      const studentId = await resolveStudentPk(req.params.studentId.trim());
+      if (studentId === null) return res.status(404).json({ success: false, error: 'Student not found' });
       if (req.user.role === 'student') {
         const mine = await ownStudentId(req);
         if (mine !== studentId) return res.status(403).json({ success: false, error: 'Students can only view their own fees' });
@@ -169,11 +181,12 @@ router.get('/report', requireRole(...STAFF), async (req, res, next) => {
 // department/semester cohort at once (staff only).
 // Body: { fee_type_id, amount? (defaults to the fee type's amount),
 //         student_id? | department_id?, semester_id?, academic_year_id?, due_date? }
-// Exactly one of student_id / department_id is required.
+// student_id accepts the public student number ("001") or the internal
+// record id. Exactly one of student_id / department_id is required.
 router.post('/assign', requireRole(...STAFF),
   [body('fee_type_id').isInt({ min: 1 }),
    body('amount').optional().isFloat({ min: 0.01 }),
-   body('student_id').optional().isInt({ min: 1 }),
+   body('student_id').optional().trim().notEmpty(),
    body('department_id').optional().isInt({ min: 1 }),
    body('semester_id').optional().isInt({ min: 1 }),
    body('academic_year_id').optional().isInt({ min: 1 }),
@@ -186,6 +199,14 @@ router.post('/assign', requireRole(...STAFF),
       }
       const type = await query('SELECT * FROM fee_types WHERE id = $1 AND is_active = TRUE', [b.fee_type_id]);
       if (!type.rows[0]) return res.status(404).json({ success: false, error: 'Fee type not found or inactive' });
+      // student_id may be the public student number ("001") or the
+      // internal record id — resolve it to the internal id before using
+      // it as a foreign key.
+      let targetStudentId = null;
+      if (b.student_id !== undefined && b.student_id !== null && b.student_id !== '') {
+        targetStudentId = await resolveStudentPk(String(b.student_id).trim());
+        if (targetStudentId === null) return res.status(404).json({ success: false, error: 'Student not found' });
+      }
       const amount = b.amount || Number(type.rows[0].amount);
       // Approved scholarship for this student + year/semester? Store the
       // fee net of the discount (amount_due = gross - discount). The
@@ -198,14 +219,14 @@ router.post('/assign', requireRole(...STAFF),
         return { net: Math.round((gross - discount) * 100) / 100, discount, awardId: award.id };
       }
       let created;
-      if (b.student_id) {
-        const d = await discounted(b.student_id, amount);
+      if (targetStudentId) {
+        const d = await discounted(targetStudentId, amount);
         const { rows } = await query(
           `INSERT INTO student_fees (student_id, fee_type_id, amount_due, discount_amount, student_scholarship_id, due_date, academic_year_id, semester_id)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
            ON CONFLICT (student_id, fee_type_id, COALESCE(academic_year_id,0), COALESCE(semester_id,0)) DO NOTHING
            RETURNING *`,
-          [b.student_id, b.fee_type_id, d.net, d.discount, d.awardId, b.due_date || null,
+          [targetStudentId, b.fee_type_id, d.net, d.discount, d.awardId, b.due_date || null,
            b.academic_year_id || null, b.semester_id || null]);
         created = rows;
         if (!created.length) return res.status(409).json({ success: false, error: 'This fee is already assigned to the student for that year/semester' });

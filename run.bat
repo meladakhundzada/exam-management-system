@@ -166,6 +166,14 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+psql "%DATABASE_URL%" -v ON_ERROR_STOP=1 -f "%~dp0database\migrations\012_student_id_simple.sql"
+if errorlevel 1 (
+  echo.
+  echo Student ID migration failed. Read the error above, then double-click
+  echo run.bat again.
+  pause
+  exit /b 1
+)
 
 if not exist "%~dp0backend\node_modules" (
   echo Installing backend packages (first time only, needs internet)...
