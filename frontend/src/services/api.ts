@@ -681,8 +681,11 @@ export function downloadBlob(blob: Blob, filename: string) {
 export function apiErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     // The backend returns errors as { success: false, error: "..." },
-    // not { message: ... } — read both.
-    const data = error.response?.data as { message?: string; error?: string } | undefined;
+    // not { message: ... } — read both. Validation failures carry a
+    // `details` array with the specific field message (e.g. the name
+    // rule) — show that first, not the generic "Validation failed".
+    const data = error.response?.data as { message?: string; error?: string; details?: Array<{ field?: string; message?: string }> } | undefined;
+    if (data?.details?.length && data.details[0]?.message) return data.details[0].message;
     if (data?.error) return data.error;
     if (data?.message) return data.message;
     if (error.response?.status === 403) return 'You do not have permission to perform this action.';

@@ -13,6 +13,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const { validate, pagination, paginatedResponse } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId, SYSTEM_ROLES } = require('../utils/roles');
+const { personName, phone, admissionYear } = require('../utils/validation');
 
 const router = express.Router();
 router.use(authenticate);
@@ -68,15 +69,15 @@ router.get('/:id', param('id').isInt(), validate, async (req, res, next) => {
 });
 
 const createValidators = [
-  body('full_name').trim().notEmpty().withMessage('full_name required'),
+  body('full_name').trim().custom(personName),
   body('email').isEmail().withMessage('Valid email required'),
   body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
   body('role').isIn(ROLE_NAMES).withMessage(`role must be one of: ${ROLE_NAMES.join(', ')}`),
-  body('phone').optional().trim(),
+  body('phone').optional({ values: 'falsy' }).custom(phone),
   body('department_id').optional().isInt({ min: 1 }),
   body('employee_id').optional().trim(),
   body('student_id').optional().trim(),
-  body('admission_year').optional().isInt({ min: 2000, max: 2100 }),
+  body('admission_year').optional().custom(admissionYear),
   body('current_semester').optional().isInt({ min: 1, max: 8 }),
 ];
 
@@ -162,8 +163,8 @@ router.post('/', createValidators, validate, async (req, res, next) => {
 // lock you out of the Super Admin account). Changing a role does not
 // create or remove linked lecturer/student rows.
 router.put('/:id', param('id').isInt(),
-  [body('full_name').optional().trim().notEmpty(),
-   body('phone').optional().trim(),
+  [body('full_name').optional().trim().custom(personName),
+   body('phone').optional({ values: 'falsy' }).custom(phone),
    body('role').optional().isIn(ROLE_NAMES),
    body('is_active').optional().isBoolean()],
   validate, async (req, res, next) => {

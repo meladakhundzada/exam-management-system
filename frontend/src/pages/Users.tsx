@@ -6,6 +6,7 @@ import {
 } from '../services/api';
 import { useAuth, ROLE_LABELS } from '../context/AuthContext';
 import { nextStudentId } from '../utils/studentId';
+import { validatePersonName, validatePhone, validateEmail } from '../utils/validation';
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -114,7 +115,12 @@ export default function Users() {
 
   const createUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (createForm.full_name.trim().length < 2) { setFormError('Full name is required.'); return; }
+    const nameErr = validatePersonName(createForm.full_name);
+    if (nameErr) { setFormError(nameErr); return; }
+    const emailErr = validateEmail(createForm.email);
+    if (emailErr) { setFormError(emailErr); return; }
+    const phoneErr = validatePhone(createForm.phone);
+    if (phoneErr) { setFormError(phoneErr); return; }
     if (createForm.password.length < 8) { setFormError('Password must be at least 8 characters.'); return; }
     if (needsDepartment && !createForm.department_id) { setFormError('Choose a department for a lecturer or student account.'); return; }
     // Student ID / admission year are auto-generated when left blank:
@@ -159,6 +165,10 @@ export default function Users() {
   const saveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editTarget) return;
+    const nameErr = validatePersonName(editForm.full_name);
+    if (nameErr) { setFormError(nameErr); return; }
+    const phoneErr = validatePhone(editForm.phone);
+    if (phoneErr) { setFormError(phoneErr); return; }
     setSaving(true);
     try {
       const isSelf = String(editTarget.id) === user?.id;

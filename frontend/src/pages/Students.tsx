@@ -8,6 +8,7 @@ import {
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { nextStudentId } from '../utils/studentId';
+import { validatePersonName, validatePhone, validateEmail, validateAdmissionYear } from '../utils/validation';
 
 const STATUS_BADGE: Record<Student['status'], string> = {
   ACTIVE: 'bg-emerald-100 text-emerald-700',
@@ -171,10 +172,15 @@ export default function Students() {
 
   const validate = () => {
     if (!/^[A-Za-z0-9-]{3,20}$/.test(form.studentNo)) return 'Student number could not be generated — please reload the page and try again.';
-    if (form.fullName.trim().length < 3) return 'Full name is required (at least 3 characters).';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return 'Enter a valid email address.';
+    const nameErr = validatePersonName(form.fullName);
+    if (nameErr) return nameErr;
+    const emailErr = validateEmail(form.email);
+    if (emailErr) return emailErr;
+    const phoneErr = validatePhone(form.phone);
+    if (phoneErr) return phoneErr;
     if (!form.departmentId) return 'Choose a department.';
-    if (form.admissionYear < 2000 || form.admissionYear > 2100) return 'Admission year must be between 2000 and 2100.';
+    const yearErr = validateAdmissionYear(form.admissionYear);
+    if (yearErr) return yearErr;
     if (form.semester < 1 || form.semester > 8) return 'Semester must be between 1 and 8.';
     if (!editing && form.password.length < 8) return 'Password must be at least 8 characters (the student signs in with it).';
     return null;

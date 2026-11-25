@@ -11,14 +11,16 @@ const { validate, pagination, paginatedResponse } = require('../middleware/valid
 const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId } = require('../utils/roles');
 const { getDepartmentIdForUser } = require('../utils/scopes');
+const { personName, phone } = require('../utils/validation');
 
 const router = express.Router();
 router.use(authenticate);
 
 const lecturerValidators = [
   body('employee_id').trim().notEmpty(),
-  body('full_name').trim().notEmpty(),
+  body('full_name').trim().custom(personName),
   body('email').isEmail(),
+  body('phone').optional({ values: 'falsy' }).custom(phone),
   body('department_id').isInt({ min: 1 }),
   body('gender').optional().isIn(['male', 'female', 'other']),
 ];

@@ -10,6 +10,7 @@ const { validate, pagination, paginatedResponse } = require('../middleware/valid
 const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId } = require('../utils/roles');
 const { studentGpa } = require('../utils/gpa');
+const { personName, phone, admissionYear } = require('../utils/validation');
 const { getLecturerScope, studentInLecturerScope } = require('../utils/lecturerScope');
 const { getDepartmentIdForUser, getInvigilatorScheduleIds } = require('../utils/scopes');
 
@@ -27,10 +28,13 @@ async function studentIdMatchesSelf(req, res, next) {
 
 const studentValidators = [
   body('student_id').trim().notEmpty().withMessage('student_id required'),
-  body('full_name').trim().notEmpty(),
-  body('email').isEmail(),
+  body('full_name').trim().custom(personName),
+  body('email').isEmail().withMessage('Enter a valid email address.'),
+  body('phone').optional({ values: 'falsy' }).custom(phone),
+  body('guardian_name').optional({ values: 'falsy' }).custom(personName),
+  body('guardian_phone').optional({ values: 'falsy' }).custom(phone),
   body('department_id').isInt({ min: 1 }),
-  body('admission_year').isInt({ min: 2000, max: 2100 }),
+  body('admission_year').custom(admissionYear),
   body('current_semester').optional().isInt({ min: 1, max: 8 }),
   body('gender').optional().isIn(['male', 'female', 'other']),
 ];

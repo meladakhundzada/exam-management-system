@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiErrorMessage, authApi } from '../services/api';
+import { validatePersonName } from '../utils/validation';
 
 // First-time setup: creates the first Super Admin via
 // POST /api/auth/setup-first-admin. The backend only allows this while
@@ -19,6 +20,11 @@ export default function Setup() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    const nameErr = validatePersonName(fullName);
+    if (nameErr) {
+      setError(nameErr);
+      return;
+    }
     if (password.length < 8) {
       setError('Password must be at least 8 characters.');
       return;

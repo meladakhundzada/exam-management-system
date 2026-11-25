@@ -8,6 +8,7 @@ const { authLimiter, loginLockout } = require('../middleware/rateLimit');
 const { validate } = require('../middleware/validate');
 const { logAudit } = require('../utils/audit');
 const { ensureRoles, getRoleId } = require('../utils/roles');
+const { personName } = require('../utils/validation');
 
 const router = express.Router();
 
@@ -167,7 +168,7 @@ router.post(
 router.post(
   '/setup-first-admin',
   authLimiter,
-  [body('full_name').trim().notEmpty(), body('email').isEmail(),
+  [body('full_name').trim().custom(personName), body('email').isEmail(),
    body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters')],
   validate,
   async (req, res, next) => {
